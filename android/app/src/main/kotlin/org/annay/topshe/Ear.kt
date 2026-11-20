@@ -5,9 +5,8 @@ import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import ai.picovoice.eagle.Eagle
-import ai.picovoice.eagle.EagleProfile
-import ai.picovoice.porcupine.Porcupine
+import com.k2fsa.sherpa.onnx.KeywordSpotter
+import com.k2fsa.sherpa.onnx.OnlineStream
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
@@ -18,28 +17,23 @@ const val SAMPLE_RATE = 16000
 
 /**
  * Topshe's ear. One owner of the microphone, start to finish:
- *  1. Porcupine listens for "Topshe" (the only thing running while idle - very low battery).
+ *  1. A small open-source keyword spotter listens for "Topshe" (the only thing running while idle).
  *  2. After the wake word, records your command until you stop talking.
- *  3. Eagle checks the voice (wake word + command) is yours.
+ *  3. A voice-fingerprint model checks the voice (wake word + command) is yours.
  *  4. Vosk turns the command into text, fully offline.
  *
  * Fix vs v1: v1 re-ran the wake-word engine on a 3 s window every 0.5 s (6x the work
- * and repeated triggers). Here each audio frame goes through Porcupine exactly once.
+ * and repeated triggers). Here each audio chunk goes through the spotter exactly once.
  */
 class Ear(ctx: Context, prefs: Prefs) {
-    private val porcupine: Porcupine = Porcupine.Builder()
-        .setAccessKey(prefs.accessKey)
-        .setKeywordPath(Store.wakeWord(ctx).absolutePath)
-        .setSensitivity(prefs.wakeSensitivity)
-        .build(ctx)
-    private val eagle: Eagle = Eagle.Builder()
-        .setAccessKey(prefs.accessKey)
-        .build(ctx)
-    private val profile = EagleProfile(Store.voiceProfile(ctx).readBytes())
+    private val kws: KeywordSpotter = VoiceModels.keywordSpotter(ctx, prefs)
+    private var kwsStream: OnlineStream = kws.createStream()
+    private val speaker = VoiceModels.speakerExtractor(ctx)
+    private val profile = VoiceModels.loadProfile(ctx)
     private val speechModel = Model(Store.speechModel(ctx).absolutePath)
 
-    private val frame = ShortArray(porcupine.frameLength)
-    private val preroll = ShortRing(SAMPLE_RATE)   // last 1 s of audio (holds the wake word)
+    private val frame = ShortArray(SAMPLE_RATE / 10)   // 100 ms chunks
+    private val preroll = ShortRing(SAMPLE_RATE * 3 / 2)   // last 1.5 s of audio (holds the wake word)
     private var rec: AudioRecord? = null
 
     @SuppressLint("MissingPermission")
@@ -69,7 +63,13 @@ class Ear(ctx: Context, prefs: Prefs) {
         while (keepGoing()) {
             if (!readFully(frame)) return false
             preroll.push(frame)
-            if (porcupine.process(frame) >= 0) return true
+            kwsStream.acceptWaveform(VoiceModels.toFloats(frame), SAMPLE_RATE)
+            var hit = false
+            while (kws.isReady(kwsStream)) {
+                kws.decode(kwsStream)
+                if (kws.getResult(kwsStream).keyword.isNotBlank()) { kws.reset(kwsStream); hit = true }
+            }
+            if (hit) return true
         }
         return false
     }
@@ -79,6 +79,9 @@ class Ear(ctx: Context, prefs: Prefs) {
         val buf = ShortArray(SAMPLE_RATE * ms / 1000)
         readFully(buf)
         preroll.clear()
+        // Fresh wake-word stream so half-heard audio from before doesn't carry over
+        kwsStream.release()
+        kwsStream = kws.createStream()
     }
 
     class Utterance(val wake: ShortArray, val speech: ShortArray) {
@@ -112,11 +115,9 @@ class Ear(ctx: Context, prefs: Prefs) {
         return Utterance(wake, out.toShortArray())
     }
 
-    /** Voice-match score 0..1 against your enrolled voice, or null if there wasn't enough voice. */
-    fun voiceScore(pcm: ShortArray): Float? {
-        if (pcm.size < eagle.minProcessSamples) return null
-        return runCatching { eagle.process(pcm, arrayOf(profile))?.firstOrNull() }.getOrNull()
-    }
+    /** Voice-match score (cosine, about -1..1; you are usually 0.6+) or null if too little audio. */
+    fun voiceScore(pcm: ShortArray): Float? =
+        runCatching { VoiceModels.embed(speaker, pcm)?.let { VoiceModels.cosine(it, profile) } }.getOrNull()
 
     /** Offline speech-to-text. */
     fun transcribe(pcm: ShortArray): String {
@@ -137,9 +138,9 @@ class Ear(ctx: Context, prefs: Prefs) {
 
     fun release() {
         close()
-        runCatching { porcupine.delete() }
-        runCatching { eagle.delete() }
-        runCatching { profile.delete() }
+        runCatching { kwsStream.release() }
+        runCatching { kws.release() }
+        runCatching { speaker.release() }
         runCatching { speechModel.close() }
     }
 

@@ -10,34 +10,38 @@ import java.util.Locale
 class Prefs(ctx: Context) {
     private val sp = ctx.getSharedPreferences("topshe", Context.MODE_PRIVATE)
 
-    var accessKey: String
-        get() = sp.getString("accessKey", "") ?: ""
-        set(v) = sp.edit().putString("accessKey", v.trim()).apply()
+    /** Wake-word strictness (keyword threshold), 0.05..0.60. Lower = wakes more easily, more false wakes. */
+    var wakeStrictness: Float
+        get() = sp.getFloat("wakeStrictness", 0.20f)
+        set(v) = sp.edit().putFloat("wakeStrictness", v).apply()
 
-    /** Porcupine wake-word sensitivity, 0..1 (higher = wakes more easily, more false wakes). */
-    var wakeSensitivity: Float
-        get() = sp.getFloat("wakeSensitivity", 0.6f)
-        set(v) = sp.edit().putFloat("wakeSensitivity", v).apply()
-
-    /** Eagle voice-match score needed to accept a command, 0..1 (higher = stricter). */
+    /** Voice-match score needed to accept a command (cosine similarity), 0..1. Higher = stricter. */
     var voiceThreshold: Float
-        get() = sp.getFloat("voiceThreshold", 0.6f)
+        get() = sp.getFloat("voiceThreshold", 0.50f)
         set(v) = sp.edit().putFloat("voiceThreshold", v).apply()
+
+    /** How the wake word may be spelled, comma separated. Each spelling is tried. */
+    var wakeSpellings: String
+        get() = sp.getString("wakeSpellings", "TOPSHE, TOP SHAY, TOPSHAY") ?: "TOPSHE"
+        set(v) = sp.edit().putString("wakeSpellings", v).apply()
 }
 
 /** Where Topshe keeps its files (all inside the app's private storage). */
 object Store {
     fun model(ctx: Context) = File(ctx.filesDir, "topshe.gguf")
-    fun wakeWord(ctx: Context) = File(ctx.filesDir, "topshe.ppn")
-    fun voiceProfile(ctx: Context) = File(ctx.filesDir, "voice_profile.bin")
     fun speechModel(ctx: Context) = File(ctx.filesDir, "vosk-model")
+    fun wakeModel(ctx: Context) = File(ctx.filesDir, "kws")
+    fun speakerModel(ctx: Context) = File(ctx.filesDir, "speaker.onnx")
+    fun voiceProfile(ctx: Context) = File(ctx.filesDir, "voice_profile_v2.bin")
     fun logFile(ctx: Context) = File(ctx.filesDir, "activity.log")
 
-    fun missing(ctx: Context, prefs: Prefs): List<String> = buildList {
-        if (prefs.accessKey.isBlank()) add("Picovoice AccessKey")
-        if (!wakeWord(ctx).exists()) add("wake word file (.ppn)")
+    fun voiceModelsReady(ctx: Context) =
+        File(wakeModel(ctx), "tokens.txt").exists() && speakerModel(ctx).length() > 1_000_000 &&
+            (File(speechModel(ctx), "conf").exists() || File(speechModel(ctx), "am").exists())
+
+    fun missing(ctx: Context): List<String> = buildList {
         if (!model(ctx).exists()) add("Topshe model (.gguf)")
-        if (!File(speechModel(ctx), "conf").exists() && !File(speechModel(ctx), "am").exists()) add("speech model")
+        if (!voiceModelsReady(ctx)) add("voice models (download)")
         if (!voiceProfile(ctx).exists()) add("your voice recording")
     }
 }

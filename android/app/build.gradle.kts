@@ -51,9 +51,10 @@ android {
 
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
-    // Wake word ("Topshe") and speaker check (only Annay's voice)
-    implementation("ai.picovoice:porcupine-android:3.+")
-    implementation("ai.picovoice:eagle-android:+")
+    // Wake word ("Topshe") + voice check (only Annay's voice): open source, no account
+    implementation("com.k2fsa.sherpa.onnx:sherpa-onnx-android:+")
+    // Unpacks the wake-word model download (.tar.bz2)
+    implementation("org.apache.commons:commons-compress:1.26.2")
     // Offline speech-to-text
     implementation("com.alphacephei:vosk-android:0.3.47@aar")
     implementation("net.java.dev.jna:jna:5.13.0@aar")

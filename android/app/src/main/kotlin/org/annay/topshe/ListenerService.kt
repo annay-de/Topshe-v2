@@ -84,7 +84,7 @@ class ListenerService : Service() {
         setState(State.STARTING, "Starting...")
         loop = scope.launch {
             try {
-                val missing = Store.missing(this@ListenerService, prefs)
+                val missing = Store.missing(this@ListenerService)
                 if (missing.isNotEmpty()) {
                     ActivityLog.add(this@ListenerService, "Can't start. Missing: ${missing.joinToString()}")
                     kill(); return@launch

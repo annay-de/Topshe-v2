@@ -14,7 +14,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
-import android.text.InputType
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
@@ -22,20 +21,14 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
-import ai.picovoice.eagle.EagleProfiler
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
-import java.util.zip.ZipInputStream
 
 /** Setup screen: one button per step, plus Start/Stop and the activity log. */
 class MainActivity : Activity() {
 
     companion object {
         const val EXTRA_AUTOSTART = "autostart"
-        private const val PICK_PPN = 1
         private const val PICK_GGUF = 2
-        private const val SPEECH_MODEL_URL = "https://alphacephei.com/vosk/models/vosk-model-small-en-in-0.4.zip"
     }
 
     private lateinit var prefs: Prefs
@@ -58,7 +51,7 @@ class MainActivity : Activity() {
 
     /** Opened by the tile: start listening and get out of the way. */
     private fun autostart() {
-        if (Store.missing(this, prefs).isEmpty() && hasMic()) {
+        if (Store.missing(this).isEmpty() && hasMic()) {
             ListenerService.send(this, ListenerService.ACTION_START)
             moveTaskToBack(true)
             if (!::status.isInitialized) finish()
@@ -101,29 +94,28 @@ class MainActivity : Activity() {
         })
         col.addView(button("Allow background battery use") { askBattery() })
 
-        col.addView(heading("2. Picovoice AccessKey"))
-        col.addView(note("From console.picovoice.ai (free). Used for the wake word and the voice check."))
-        val key = EditText(this).apply {
-            hint = "Paste AccessKey"; setText(prefs.accessKey)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-        }
-        col.addView(key)
-        col.addView(button("Save key") { prefs.accessKey = key.text.toString(); refresh() })
-
-        col.addView(heading("3. Files"))
-        col.addView(button("Pick wake word file (topshe .ppn)") { pick(PICK_PPN) })
+        col.addView(heading("2. Files"))
         col.addView(button("Pick Topshe model (topshe_v2.gguf)") { pick(PICK_GGUF) })
-        col.addView(button("Download speech model (36 MB, once)") { downloadSpeechModel() })
+        col.addView(note("Voice models: wake word, voice check and speech-to-text. Free and open source, about 75 MB, downloaded once."))
+        col.addView(button("Download voice models") { downloadVoiceModels() })
 
-        col.addView(heading("4. Teach it your voice"))
-        col.addView(note("Tap, then talk normally for about 30 seconds in a quiet room - read anything out loud. Only this voice will be able to use Topshe."))
+        col.addView(heading("3. Teach it your voice"))
+        col.addView(note("Tap, then talk normally for 25 seconds in a quiet room - read anything out loud. Only this voice will be able to use Topshe."))
         col.addView(button("Record my voice") { enrollVoice() })
 
-        col.addView(heading("5. Tuning"))
-        col.addView(slider("Voice check strictness", prefs.voiceThreshold) { prefs.voiceThreshold = it })
-        col.addView(note("Higher = stricter. If Topshe ignores you, lower it. Check the log below for your scores."))
-        col.addView(slider("Wake word sensitivity", prefs.wakeSensitivity) { prefs.wakeSensitivity = it })
-        col.addView(note("Higher = wakes more easily (but more false wakes). Restart listening after changing."))
+        col.addView(heading("4. Tuning"))
+        col.addView(slider("Voice check strictness", prefs.voiceThreshold, 0.10f, 0.90f) { prefs.voiceThreshold = it })
+        col.addView(note("Higher = stricter. If Topshe ignores you, lower it. The log below shows your score each time."))
+        col.addView(slider("Wake word strictness", prefs.wakeStrictness, 0.05f, 0.60f) { prefs.wakeStrictness = it })
+        col.addView(note("Lower = wakes more easily (but more false wakes). Restart listening after changing."))
+        val spell = EditText(this).apply { setText(prefs.wakeSpellings) }
+        col.addView(note("Wake word spellings (comma separated). Add how 'Topshe' sounds to you, e.g. TOP SHAY."))
+        col.addView(spell)
+        col.addView(button("Save spellings") {
+            prefs.wakeSpellings = spell.text.toString()
+            val lines = runCatching { VoiceModels.keywordLines(this, prefs.wakeSpellings) }.getOrDefault(emptyList())
+            status.text = if (lines.isEmpty()) "Saved. (Download voice models first to check them.)" else "Saved ${lines.size} spelling(s). Restart listening."
+        })
 
         col.addView(heading("Activity"))
         col.addView(button("Refresh log") { refresh() })
@@ -134,14 +126,14 @@ class MainActivity : Activity() {
         refresh()
     }
 
-    private fun slider(label: String, value: Float, save: (Float) -> Unit): View {
+    private fun slider(label: String, value: Float, lo: Float, hi: Float, save: (Float) -> Unit): View {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val t = TextView(this).apply { text = "$label: %.2f".format(value) }
         val bar = SeekBar(this).apply {
-            max = 90; progress = (value * 100).toInt().coerceIn(10, 100) - 10   // 0.10 .. 1.00
+            max = 100; progress = (((value - lo) / (hi - lo)) * 100).toInt().coerceIn(0, 100)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
-                    val v = (p + 10) / 100f; t.text = "$label: %.2f".format(v); if (fromUser) save(v)
+                    val v = lo + (hi - lo) * p / 100f; t.text = "$label: %.2f".format(v); if (fromUser) save(v)
                 }
                 override fun onStartTrackingTouch(s: SeekBar?) {}
                 override fun onStopTrackingTouch(s: SeekBar?) {}
@@ -154,7 +146,7 @@ class MainActivity : Activity() {
     private fun setStatus(s: String) = runOnUiThread { status.text = s }
 
     private fun refresh() {
-        val missing = Store.missing(this, prefs)
+        val missing = Store.missing(this)
         val s = ListenerService.state
         status.text = when {
             missing.isNotEmpty() -> "Still needed: ${missing.joinToString()}"
@@ -169,7 +161,7 @@ class MainActivity : Activity() {
     private fun toggle() {
         val s = ListenerService.state
         if (s == ListenerService.State.OFF || s == ListenerService.State.PAUSED) {
-            val missing = Store.missing(this, prefs)
+            val missing = Store.missing(this)
             if (missing.isNotEmpty()) { status.text = "Still needed: ${missing.joinToString()}"; return }
             if (!hasMic()) { askPermissions(); return }
             ListenerService.send(this, ListenerService.ACTION_START)
@@ -206,7 +198,8 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         val uri = data?.data ?: return
         if (resultCode != RESULT_OK) return
-        val target = if (requestCode == PICK_PPN) Store.wakeWord(this) else Store.model(this)
+        if (requestCode != PICK_GGUF) return
+        val target = Store.model(this)
         setStatus("Copying file... (the model is about 1 GB, give it a minute)")
         Thread {
             try {
@@ -221,29 +214,12 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    private fun downloadSpeechModel() {
-        setStatus("Downloading speech model...")
+    private fun downloadVoiceModels() {
         Thread {
             try {
-                val dest = Store.speechModel(this)
-                dest.deleteRecursively()
-                val conn = URL(SPEECH_MODEL_URL).openConnection() as HttpURLConnection
-                conn.instanceFollowRedirects = true
-                ZipInputStream(conn.inputStream.buffered()).use { zip ->
-                    var entry = zip.nextEntry
-                    while (entry != null) {
-                        // Strip the top folder ("vosk-model-small-en-in-0.4/")
-                        val rel = entry.name.substringAfter('/', "")
-                        if (rel.isNotEmpty() && !rel.contains("..")) {
-                            val f = File(dest, rel)
-                            if (entry.isDirectory) f.mkdirs() else { f.parentFile?.mkdirs(); f.outputStream().use { zip.copyTo(it) } }
-                        }
-                        entry = zip.nextEntry
-                    }
-                }
-                setStatus("Speech model ready.")
+                VoiceModels.downloadAll(this) { setStatus(it) }
             } catch (e: Exception) {
-                setStatus("Download failed: ${e.message}")
+                setStatus("Download failed: ${e.message}. Check internet and try again.")
             }
             runOnUiThread { refresh() }
         }.start()
@@ -254,40 +230,46 @@ class MainActivity : Activity() {
     @SuppressLint("MissingPermission")
     private fun enrollVoice() {
         if (enrolling) return
-        if (prefs.accessKey.isBlank()) { setStatus("Save your AccessKey first."); return }
+        if (!Store.voiceModelsReady(this)) { setStatus("Download the voice models first."); return }
         if (!hasMic()) { askPermissions(); return }
         if (ListenerService.state != ListenerService.State.OFF) ListenerService.send(this, ListenerService.ACTION_KILL)
         enrolling = true
         Thread {
             var rec: AudioRecord? = null
-            var profiler: EagleProfiler? = null
+            val ex = runCatching { VoiceModels.speakerExtractor(this) }.getOrNull()
             try {
-                profiler = EagleProfiler.Builder().setAccessKey(prefs.accessKey).build(this)
-                val chunk = ShortArray(profiler.frameLength)
+                if (ex == null) { setStatus("Voice-check model failed to load. Download again."); return@Thread }
+                val seconds = 25
+                val pcm = ShortArray(SAMPLE_RATE * seconds)
                 rec = AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, SAMPLE_RATE,
                     AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
                     maxOf(AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT), SAMPLE_RATE * 2))
                 rec.startRecording()
-                var pct = 0f
-                val t0 = System.currentTimeMillis()
-                while (pct < 100f && System.currentTimeMillis() - t0 < 120_000) {
-                    var off = 0
-                    while (off < chunk.size) { val n = rec.read(chunk, off, chunk.size - off); if (n <= 0) break; off += n }
-                    pct = profiler.enroll(chunk)
-                    setStatus("Keep talking... %.0f%%".format(pct))
+                var off = 0
+                while (off < pcm.size) {
+                    val n = rec.read(pcm, off, minOf(SAMPLE_RATE / 10, pcm.size - off))
+                    if (n <= 0) break
+                    off += n
+                    setStatus("Keep talking... ${seconds - off / SAMPLE_RATE} s left")
                 }
-                if (pct < 100f) pct = profiler.flush()
-                if (pct < 100f) { setStatus("Not enough clear speech (%.0f%%). Try again somewhere quieter.".format(pct)); return@Thread }
-                val profile = profiler.export()
-                Store.voiceProfile(this).writeBytes(profile.bytes)
-                profile.delete()
-                ActivityLog.add(this, "Voice enrolled")
-                setStatus("Done! Topshe knows your voice.")
+                setStatus("Learning your voice...")
+                // 5 clips of 5 s each -> average voice fingerprint
+                val clip = SAMPLE_RATE * 5
+                val embs = (0 until off / clip).mapNotNull { VoiceModels.embed(ex, pcm.copyOfRange(it * clip, (it + 1) * clip)) }
+                if (embs.size < 3) { setStatus("Not enough clear speech. Try again somewhere quieter."); return@Thread }
+                val avg = FloatArray(embs[0].size)
+                for (e in embs) for (i in avg.indices) avg[i] += e[i]
+                val profile = VoiceModels.normalise(avg)
+                VoiceModels.saveProfile(this, profile)
+                // How consistent were the clips? (helps pick the strictness)
+                val selfScores = embs.map { VoiceModels.cosine(it, profile) }
+                ActivityLog.add(this, "Voice enrolled. Your clips scored %.2f to %.2f".format(selfScores.min(), selfScores.max()))
+                setStatus("Done! Topshe knows your voice. (Your clips scored %.2f-%.2f)".format(selfScores.min(), selfScores.max()))
             } catch (e: Exception) {
                 setStatus("Voice recording failed: ${e.message}")
             } finally {
                 rec?.run { runCatching { stop() }; release() }
-                profiler?.delete()
+                ex?.release()
                 enrolling = false
                 runOnUiThread { refresh() }
             }
