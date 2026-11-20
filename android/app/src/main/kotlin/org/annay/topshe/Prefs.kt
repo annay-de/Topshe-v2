@@ -29,6 +29,7 @@ class Prefs(ctx: Context) {
 /** Where Topshe keeps its files (all inside the app's private storage). */
 object Store {
     fun model(ctx: Context) = File(ctx.filesDir, "topshe.gguf")
+    fun chatModel(ctx: Context) = File(ctx.filesDir, "topshe_chat.gguf")
     fun speechModel(ctx: Context) = File(ctx.filesDir, "vosk-model")
     fun wakeModel(ctx: Context) = File(ctx.filesDir, "kws")
     fun speakerModel(ctx: Context) = File(ctx.filesDir, "speaker.onnx")

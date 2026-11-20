@@ -5,12 +5,17 @@ import org.json.JSONObject
 /** The C++ llama.cpp bridge (src/main/cpp/topshe_llama.cpp). */
 object NativeLlama {
     init { System.loadLibrary("topshe_llama") }
-    external fun load(path: String): Boolean
-    external fun unload()
-    external fun generate(prompt: String, maxTokens: Int, temp: Float, threads: Int): ByteArray
+    external fun load(path: String): Long
+    external fun unload(handle: Long)
+    external fun generate(handle: Long, prompt: String, maxTokens: Int, temp: Float, threads: Int): ByteArray
 }
 
-/** Topshe's model: turns your words into an action, or answers a question. */
+/**
+ * Topshe's two models:
+ *  - command model (1.5B, fast): turns your words into an action
+ *  - chat model (3B, smarter): answers questions and talks. Optional; if it isn't
+ *    installed, the command model answers too.
+ */
 object Brain {
     // Must match the training notebook exactly (training/make_dataset_v2.py)
     const val CMD_SYSTEM =
@@ -25,29 +30,35 @@ object Brain {
 
     private const val THREADS = 4
 
-    @Volatile var loaded = false
-        private set
+    @Volatile private var cmdModel = 0L
+    @Volatile private var chatModel = 0L
 
-    fun load(path: String): Boolean {
-        loaded = NativeLlama.load(path)
-        return loaded
+    val loaded get() = cmdModel != 0L
+
+    /** Loads the command model, and the chat model if it's on the phone. */
+    fun load(cmdPath: String, chatPath: String?): Boolean {
+        if (cmdModel == 0L) cmdModel = NativeLlama.load(cmdPath)
+        if (chatModel == 0L && chatPath != null) chatModel = NativeLlama.load(chatPath)
+        return cmdModel != 0L
     }
 
     fun unload() {
-        NativeLlama.unload()
-        loaded = false
+        if (cmdModel != 0L) NativeLlama.unload(cmdModel)
+        if (chatModel != 0L) NativeLlama.unload(chatModel)
+        cmdModel = 0L; chatModel = 0L
     }
 
     private fun chatml(system: String, user: String) =
         "<|im_start|>system\n$system<|im_end|>\n<|im_start|>user\n$user<|im_end|>\n<|im_start|>assistant\n"
 
-    private fun run(system: String, user: String, maxTokens: Int, temp: Float) =
-        String(NativeLlama.generate(chatml(system, user), maxTokens, temp, THREADS), Charsets.UTF_8).trim()
+    private fun run(model: Long, system: String, user: String, maxTokens: Int, temp: Float) =
+        String(NativeLlama.generate(model, chatml(system, user), maxTokens, temp, THREADS), Charsets.UTF_8).trim()
 
     /** Returns the action JSON, or null if the model produced something unreadable. */
-    fun command(text: String): JSONObject? = parseJson(run(CMD_SYSTEM, text, 96, 0f))
+    fun command(text: String): JSONObject? = parseJson(run(cmdModel, CMD_SYSTEM, text, 96, 0f))
 
-    fun chat(question: String): String = run(CHAT_SYSTEM, question, 160, 0.6f)
+    fun chat(question: String): String =
+        run(if (chatModel != 0L) chatModel else cmdModel, CHAT_SYSTEM, question, 200, 0.6f)
         .ifBlank { "Sorry, I don't have an answer for that." }
 
     /** Lenient: finds the first balanced {...} in the output (idea kept from Topshe v1). */

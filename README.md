@@ -23,7 +23,7 @@ It runs offline on the phone, using its own fine-tuned model.
 | "Topshe, call Tanmay" | Asks which Tanmay (if needed), then "yes or no", then calls |
 | "Topshe, message Rahul I'm on my way" | Confirms, then opens WhatsApp with the text typed (you tap send). Say "by SMS" to send an SMS directly |
 | "Topshe, wifi off" | Runs the Tasker task named `wifi off` |
-| "Topshe, who directed Pather Panchali?" | Answers |
+| "Topshe, who directed Pather Panchali?" | Answers (using the smarter 3B chat model if installed) |
 | "Topshe, go to sleep" | Pauses listening |
 
 ## Setup (once)

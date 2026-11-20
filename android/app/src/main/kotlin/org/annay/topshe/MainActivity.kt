@@ -29,6 +29,7 @@ class MainActivity : Activity() {
     companion object {
         const val EXTRA_AUTOSTART = "autostart"
         private const val PICK_GGUF = 2
+        private const val PICK_CHAT = 3
     }
 
     private lateinit var prefs: Prefs
@@ -95,7 +96,8 @@ class MainActivity : Activity() {
         col.addView(button("Allow background battery use") { askBattery() })
 
         col.addView(heading("2. Files"))
-        col.addView(button("Pick Topshe model (topshe_v2.gguf)") { pick(PICK_GGUF) })
+        col.addView(button("Pick command model (topshe_v2.gguf)") { pick(PICK_GGUF) })
+        col.addView(button("Pick chat model (topshe_chat_v3.gguf) - optional, smarter") { pick(PICK_CHAT) })
         col.addView(note("Voice models: wake word, voice check and speech-to-text. Free and open source, about 75 MB, downloaded once."))
         col.addView(button("Download voice models") { downloadVoiceModels() })
 
@@ -198,9 +200,12 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         val uri = data?.data ?: return
         if (resultCode != RESULT_OK) return
-        if (requestCode != PICK_GGUF) return
-        val target = Store.model(this)
-        setStatus("Copying file... (the model is about 1 GB, give it a minute)")
+        val target = when (requestCode) {
+            PICK_GGUF -> Store.model(this)
+            PICK_CHAT -> Store.chatModel(this)
+            else -> return
+        }
+        setStatus("Copying file... (models are 1-2 GB, give it a minute or two)")
         Thread {
             try {
                 val tmp = File(target.path + ".tmp")

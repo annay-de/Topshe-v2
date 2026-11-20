@@ -91,7 +91,8 @@ class ListenerService : Service() {
                     ActivityLog.add(this@ListenerService, "Can't start. Missing: ${missing.joinToString()}")
                     kill(); return@launch
                 }
-                if (!Brain.loaded && !Brain.load(Store.model(this@ListenerService).absolutePath)) {
+                val chat = Store.chatModel(this@ListenerService).takeIf { it.exists() }?.absolutePath
+                if (!Brain.loaded && !Brain.load(Store.model(this@ListenerService).absolutePath, chat)) {
                     ActivityLog.add(this@ListenerService, "Model failed to load")
                     kill(); return@launch
                 }

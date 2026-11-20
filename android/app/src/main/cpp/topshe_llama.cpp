@@ -9,36 +9,34 @@
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "topshe-llama", __VA_ARGS__)
 
-static llama_model *g_model = nullptr;
-static std::mutex g_mu;
+static std::mutex g_mu;   // one generation at a time (phone CPU)
 
-extern "C" JNIEXPORT jboolean JNICALL
+// Returns a handle (pointer) to the loaded model, or 0 on failure. Several models can be loaded.
+extern "C" JNIEXPORT jlong JNICALL
 Java_org_annay_topshe_NativeLlama_load(JNIEnv *env, jobject, jstring jpath) {
     std::lock_guard<std::mutex> lk(g_mu);
-    if (g_model) return JNI_TRUE;
-    llama_backend_init();
+    static bool backend = false;
+    if (!backend) { llama_backend_init(); backend = true; }
     const char *path = env->GetStringUTFChars(jpath, nullptr);
     llama_model_params mp = llama_model_default_params();
-    g_model = llama_model_load_from_file(path, mp);
+    llama_model *m = llama_model_load_from_file(path, mp);
+    LOGI("model load %s: %s", path, m ? "ok" : "FAILED");
     env->ReleaseStringUTFChars(jpath, path);
-    LOGI("model load %s", g_model ? "ok" : "FAILED");
-    return g_model ? JNI_TRUE : JNI_FALSE;
+    return (jlong) m;
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_org_annay_topshe_NativeLlama_unload(JNIEnv *, jobject) {
+Java_org_annay_topshe_NativeLlama_unload(JNIEnv *, jobject, jlong handle) {
     std::lock_guard<std::mutex> lk(g_mu);
-    if (g_model) {
-        llama_model_free(g_model);
-        g_model = nullptr;
-    }
+    if (handle) llama_model_free((llama_model *) handle);
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_org_annay_topshe_NativeLlama_generate(JNIEnv *env, jobject, jstring jprompt,
+Java_org_annay_topshe_NativeLlama_generate(JNIEnv *env, jobject, jlong handle, jstring jprompt,
                                            jint maxTokens, jfloat temp, jint threads) {
     std::lock_guard<std::mutex> lk(g_mu);
     std::string out;
+    llama_model *g_model = (llama_model *) handle;
     if (g_model) {
         const char *p = env->GetStringUTFChars(jprompt, nullptr);
         std::string prompt(p);
