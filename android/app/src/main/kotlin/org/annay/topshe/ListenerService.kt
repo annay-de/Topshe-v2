@@ -54,6 +54,7 @@ class ListenerService : Service() {
     private lateinit var prefs: Prefs
     private lateinit var speaker: Speaker
     private lateinit var actions: Actions
+    private lateinit var music: Music
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -62,6 +63,7 @@ class ListenerService : Service() {
         prefs = Prefs(this)
         speaker = Speaker(this)
         actions = Actions(this, speaker)
+        music = Music(this, speaker)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -128,6 +130,8 @@ class ListenerService : Service() {
         if (heard.isBlank()) { speaker.say("Sorry, I didn't catch that."); return true }
 
         setState(State.BUSY, "Working: $heard")
+        // Music / media first: simple rules, instant, no model needed
+        if (music.handle(heard)) { ActivityLog.add(this, "Media command"); return true }
         val cmd = Brain.command(heard)
         if (cmd == null) { speaker.say("Sorry, I got confused. Try again?"); return true }
 

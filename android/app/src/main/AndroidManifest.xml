@@ -23,6 +23,12 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
         <package android:name="com.whatsapp" />
+        <package android:name="com.spotify.music" />
+        <package android:name="com.brave.browser" />
+        <package android:name="com.google.android.youtube" />
+        <intent>
+            <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
+        </intent>
         <package android:name="net.dinglisch.android.taskerm" />
     </queries>
 

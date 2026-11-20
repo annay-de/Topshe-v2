@@ -12,6 +12,10 @@ It runs offline on the phone, using its own fine-tuned model.
 
 | Say | Does |
 |---|---|
+| "Topshe, play music" | Resumes Spotify (works with the phone locked) |
+| "Topshe, play Blinding Lights" / "...on Spotify" | Spotify finds and plays it |
+| "Topshe, play lofi beats on YouTube" | Opens the top YouTube result in Brave (keeps playing with the screen off) |
+| "Topshe, pause" / "next" / "previous" / "volume up" | Media controls for whatever is playing |
 | "Topshe, wake me up at 6:45" | Sets an alarm |
 | "Topshe, timer 10 minutes" | Starts a timer |
 | "Topshe, remind me to call Maa in 20 minutes" | Sets a reminder (notification) |
