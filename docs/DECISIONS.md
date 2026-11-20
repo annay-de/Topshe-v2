@@ -13,8 +13,9 @@ v1 (July 2026) was a large design: Stata/LaTeX/git tools, a laptop link over Tai
 - **Honesty:** if something can't be done, Topshe says so instead of pretending (v1 D-P2a).
 
 **Changed or dropped**
-- **Home-made voice check:** replaced with Picovoice Eagle. v1's check compared simple sound averages and was only tested on synthetic voices.
-- **Wake-word loop:** v1 ran Porcupine on a 3-second window every 0.5 s, doing 6x the work and triggering repeatedly on the same audio. v2 sends each frame through once (better battery, no double triggers).
+- **Home-made voice check:** replaced with a real speaker-embedding model (WeSpeaker, via sherpa-onnx). v1's check compared simple sound averages and was only tested on synthetic voices.
+- **Picovoice (v1's wake word):** dropped. In Nov 2026 its sign-up only accepted company emails with a 7-day trial, so the key would expire. Replaced with the sherpa-onnx open-vocabulary keyword spotter: you type the wake word, and no training or account is needed.
+- **Wake-word loop:** v1 ran its wake-word engine on a 3-second window every 0.5 s, doing 6x the work and triggering repeatedly on the same audio. v2 sends each frame through once (better battery, no double triggers).
 - **3B model:** replaced with the fine-tuned 1.5B model (`training/`), which scored 200/200 on the right action in testing and is faster on the Realme 16.
 - **Whisper and Piper native libraries:** replaced with Vosk (offline speech-to-text, ready-made Android library) and Android's built-in text-to-speech. v1 never got these built.
 - **Laptop link, gRPC memory, Stata/LaTeX/git tools:** moved to the roadmap (laptop phase).
