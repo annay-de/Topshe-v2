@@ -19,14 +19,20 @@ import java.util.Calendar
  * Calls and messages always ask "yes or no" first. If more than one contact matches a
  * name, Topshe lists them and asks which one (so it never rings the wrong Rahul).
  */
-class Actions(private val ctx: Context, private val speaker: Speaker) {
+class Actions(private val ctx: Context, private val speaker: Speaker,
+              private val memory: Memory, private val music: Music) {
 
     /** Asks a question out loud and returns what you said (only if it's your voice), or null. */
     interface Asker { suspend fun ask(question: String): String? }
 
-    /** Returns false when Topshe should stop listening (the "stop" action). */
-    suspend fun run(a: JSONObject, heard: String, asker: Asker): Boolean {
+    /** keepListening=false after "stop". outcome is logged for learning: ok/confirmed/cancelled/failed/chat. */
+    data class Result(val keepListening: Boolean, val outcome: String)
+
+    private var outcome = "ok"
+
+    suspend fun run(a: JSONObject, heard: String, asker: Asker): Result {
         val action = a.optString("action")
+        outcome = "ok"
         ActivityLog.add(ctx, "Action: $a")
         when (action) {
             "set_alarm" -> setAlarm(a)
@@ -36,11 +42,20 @@ class Actions(private val ctx: Context, private val speaker: Speaker) {
             "call" -> call(a.optString("contact"), asker)
             "message" -> message(a.optString("contact"), a.optString("text"), a.optString("app", "WhatsApp"), asker)
             "tasker" -> tasker(a.optString("task"))
-            "stop" -> { speaker.say("Okay, going quiet."); return false }
-            "chat" -> speaker.say(Brain.chat(a.optString("query").ifBlank { heard }))
-            else -> speaker.say("Sorry, I didn't understand that.")
+            "media" -> if (!music.runAction(a)) outcome = "failed"
+            "remember" -> {
+                val f = a.optString("fact").ifBlank { heard }
+                if (memory.remember(f)) speaker.say("Got it, I'll remember that.") else { outcome = "failed"; speaker.say("Sorry, what should I remember?") }
+            }
+            "forget" -> {
+                val n = memory.forget(a.optString("fact").ifBlank { heard })
+                speaker.say(if (n > 0) "Done, I've forgotten that." else "I didn't have anything like that saved.")
+            }
+            "stop" -> { speaker.say("Okay, going quiet."); return Result(false, "ok") }
+            "chat" -> { outcome = "chat"; speaker.say(Brain.chat(a.optString("query").ifBlank { heard }, memory.facts())) }
+            else -> { outcome = "failed"; speaker.say("Sorry, I didn't understand that.") }
         }
-        return true
+        return Result(true, outcome)
     }
 
     private fun launch(i: Intent): Boolean = runCatching {
@@ -154,17 +169,20 @@ class Actions(private val ctx: Context, private val speaker: Speaker) {
     /** Picks exactly one person, asking you if there's more than one match. */
     private suspend fun pickPerson(name: String, asker: Asker): Person? {
         val people = findContacts(name)
-        if (people.isEmpty()) { speaker.say("I couldn't find $name in your contacts."); return null }
+        if (people.isEmpty()) { speaker.say("I couldn't find $name in your contacts."); outcome = "failed"; return null }
         if (people.size == 1) return people[0]
+        // You picked one of these before: offer that person first (you still confirm yes/no)
+        memory.contactChoice(name)?.let { prev -> people.firstOrNull { it.name == prev }?.let { return it } }
         val list = people.take(5)
         val spoken = list.mapIndexed { i, p -> "${i + 1}, ${p.name}" }.joinToString(". ")
         val reply = asker.ask("I found ${people.size} people called $name. $spoken. Which one?")?.lowercase()
-            ?: run { speaker.say("Cancelled."); return null }
+            ?: run { speaker.say("Cancelled."); outcome = "cancelled"; return null }
         val words = reply.split(Regex("\\s+"))
         val idx = words.firstNotNullOfOrNull { w -> w.toIntOrNull() ?: numberWords[w] }
         val chosen = idx?.let { list.getOrNull(it - 1) }
             ?: list.firstOrNull { p -> p.name.lowercase().split(" ").drop(1).any { it.isNotEmpty() && reply.contains(it) } }
-        if (chosen == null) speaker.say("I didn't get which one, so I've cancelled it.")
+        if (chosen == null) { speaker.say("I didn't get which one, so I've cancelled it."); outcome = "cancelled" }
+        else memory.saveContactChoice(name, chosen.name)
         return chosen
     }
 
@@ -177,8 +195,9 @@ class Actions(private val ctx: Context, private val speaker: Speaker) {
 
     private suspend fun call(name: String, asker: Asker) {
         val p = pickPerson(name, asker) ?: return
-        if (!isYes(asker.ask("Call ${p.name}? Yes or no?"))) return speaker.say("Okay, not calling.")
+        if (!isYes(asker.ask("Call ${p.name}? Yes or no?"))) { outcome = "cancelled"; return speaker.say("Okay, not calling.") }
         val ok = launch(Intent(Intent.ACTION_CALL, Uri.parse("tel:" + Uri.encode(p.number))))
+        outcome = if (ok) "confirmed" else "failed"
         if (!ok) speaker.say("I couldn't start the call.")
     }
 
@@ -187,7 +206,8 @@ class Actions(private val ctx: Context, private val speaker: Speaker) {
         val p = pickPerson(name, asker) ?: return
         val viaSms = app.equals("SMS", ignoreCase = true)
         val how = if (viaSms) "by SMS" else "on WhatsApp"
-        if (!isYes(asker.ask("Send ${p.name} $how: $text. Yes or no?"))) return speaker.say("Okay, not sent.")
+        if (!isYes(asker.ask("Send ${p.name} $how: $text. Yes or no?"))) { outcome = "cancelled"; return speaker.say("Okay, not sent.") }
+        outcome = "confirmed"
         if (viaSms) {
             runCatching {
                 val sms = if (Build.VERSION.SDK_INT >= 31) ctx.getSystemService(SmsManager::class.java) else @Suppress("DEPRECATION") SmsManager.getDefault()

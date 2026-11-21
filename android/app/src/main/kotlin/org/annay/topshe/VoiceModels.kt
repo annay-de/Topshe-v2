@@ -4,6 +4,10 @@ import android.content.Context
 import com.k2fsa.sherpa.onnx.FeatureConfig
 import com.k2fsa.sherpa.onnx.KeywordSpotter
 import com.k2fsa.sherpa.onnx.KeywordSpotterConfig
+import com.k2fsa.sherpa.onnx.OfflineModelConfig
+import com.k2fsa.sherpa.onnx.OfflineRecognizer
+import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
+import com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig
 import com.k2fsa.sherpa.onnx.OnlineModelConfig
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractor
@@ -16,14 +20,13 @@ import java.io.File
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
-import java.util.zip.ZipInputStream
 import kotlin.math.sqrt
 
 /**
  * Open-source voice models (sherpa-onnx, Apache-2.0), downloaded once into the app:
  *  - wake word: a small keyword spotter that listens for any word you type ("TOPSHE")
  *  - voice check: a speaker-embedding model (WeSpeaker ResNet34, trained on VoxCeleb)
- *  - speech-to-text: Vosk Indian-English small model
+ *  - speech-to-text: OpenAI Whisper "base" (multilingual, int8), run offline by sherpa-onnx
  * No account, no key, no time limit.
  */
 object VoiceModels {
@@ -35,7 +38,8 @@ object VoiceModels {
         "wespeaker_en_voxceleb_resnet34_LM.onnx",
         "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx",
     )
-    private const val STT_URL = "https://alphacephei.com/vosk/models/vosk-model-small-en-in-0.4.zip"
+    private const val STT_URL =
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-base.tar.bz2"
 
     // ---------- download ----------
 
@@ -54,20 +58,27 @@ object VoiceModels {
         throw IllegalStateException("Too many redirects")
     }
 
+    /** Downloads a .tar.bz2 and keeps the top-level files (no sub-folders) that pass [keep]. */
+    private fun untarBz2(url: String, dest: File, keep: (String) -> Boolean) {
+        val tmp = File(dest.path + ".tmp").apply { deleteRecursively(); mkdirs() }
+        TarArchiveInputStream(BZip2CompressorInputStream(open(url))).use { tar ->
+            var e = tar.nextEntry
+            while (e != null) {
+                val rel = e.name.substringAfter('/', "")
+                if (!e.isDirectory && rel.isNotEmpty() && !rel.contains("..") && !rel.contains('/') && keep(rel)) {
+                    File(tmp, rel).outputStream().use { tar.copyTo(it) }
+                }
+                e = tar.nextEntry
+            }
+        }
+        dest.deleteRecursively()
+        tmp.renameTo(dest)
+    }
+
     fun downloadAll(ctx: Context, progress: (String) -> Unit) {
         if (!File(Store.wakeModel(ctx), "tokens.txt").exists()) {
             progress("Downloading wake-word model (~15 MB)...")
-            val dest = Store.wakeModel(ctx).apply { deleteRecursively(); mkdirs() }
-            TarArchiveInputStream(BZip2CompressorInputStream(open(KWS_URL))).use { tar ->
-                var e = tar.nextEntry
-                while (e != null) {
-                    val rel = e.name.substringAfter('/', "")
-                    if (!e.isDirectory && rel.isNotEmpty() && !rel.contains("..") && !rel.contains('/')) {
-                        File(dest, rel).outputStream().use { tar.copyTo(it) }
-                    }
-                    e = tar.nextEntry
-                }
-            }
+            untarBz2(KWS_URL, Store.wakeModel(ctx)) { true }
         }
         if (Store.speakerModel(ctx).length() < 1_000_000) {
             progress("Downloading voice-check model (~25 MB)...")
@@ -83,20 +94,9 @@ object VoiceModels {
             }
             last?.let { throw it }
         }
-        if (!File(Store.speechModel(ctx), "conf").exists() && !File(Store.speechModel(ctx), "am").exists()) {
-            progress("Downloading speech-to-text model (~36 MB)...")
-            val dest = Store.speechModel(ctx).apply { deleteRecursively(); mkdirs() }
-            ZipInputStream(open(STT_URL)).use { zip ->
-                var e = zip.nextEntry
-                while (e != null) {
-                    val rel = e.name.substringAfter('/', "")
-                    if (rel.isNotEmpty() && !rel.contains("..")) {
-                        val f = File(dest, rel)
-                        if (e.isDirectory) f.mkdirs() else { f.parentFile?.mkdirs(); f.outputStream().use { zip.copyTo(it) } }
-                    }
-                    e = zip.nextEntry
-                }
-            }
+        if (Store.sttModel(ctx).listFiles()?.any { it.name.contains("encoder") } != true) {
+            progress("Downloading speech-to-text model (Whisper, ~200 MB)...")
+            untarBz2(STT_URL, Store.sttModel(ctx)) { name -> name.endsWith(".onnx") || name.endsWith("tokens.txt") }
         }
         progress("Voice models ready.")
     }
@@ -157,6 +157,27 @@ object VoiceModels {
             keywordsThreshold = prefs.wakeStrictness,
         )
         return KeywordSpotter(null, config)
+    }
+
+    // ---------- speech-to-text ----------
+
+    fun speechRecognizer(ctx: Context, language: String): OfflineRecognizer {
+        val dir = Store.sttModel(ctx)
+        val files = dir.listFiles()?.toList() ?: emptyList()
+        fun find(part: String) = (files.firstOrNull { it.name.contains(part) && it.name.contains("int8") }
+            ?: files.firstOrNull { it.name.contains(part) && it.name.endsWith(".onnx") })?.absolutePath
+            ?: throw IllegalStateException("Speech model file missing: $part")
+        val tokens = files.firstOrNull { it.name.endsWith("tokens.txt") }?.absolutePath
+            ?: throw IllegalStateException("Speech model tokens missing")
+        val config = OfflineRecognizerConfig(
+            featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 80),
+            modelConfig = OfflineModelConfig(
+                whisper = OfflineWhisperModelConfig(encoder = find("encoder"), decoder = find("decoder"),
+                    language = language, task = "transcribe"),
+                tokens = tokens, numThreads = 4, modelType = "whisper",
+            ),
+        )
+        return OfflineRecognizer(null, config)
     }
 
     // ---------- voice check ----------

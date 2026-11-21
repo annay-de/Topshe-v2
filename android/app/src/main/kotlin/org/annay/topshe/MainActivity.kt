@@ -29,13 +29,13 @@ class MainActivity : Activity() {
     companion object {
         const val EXTRA_AUTOSTART = "autostart"
         private const val PICK_GGUF = 2
-        private const val PICK_CHAT = 3
     }
 
     private lateinit var prefs: Prefs
     private lateinit var status: TextView
     private lateinit var log: TextView
     private lateinit var startBtn: Button
+    private lateinit var facts: TextView
     @Volatile private var enrolling = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -77,6 +77,19 @@ class MainActivity : Activity() {
     private fun note(t: String) = TextView(this).apply { text = t; textSize = 13f; alpha = 0.75f }
 
     private fun button(t: String, onClick: () -> Unit) = Button(this).apply { text = t; setOnClickListener { onClick() } }
+    private fun buttonV(t: String, onClick: (View) -> Unit) = Button(this).apply { text = t; setOnClickListener { onClick(it) } }
+
+    private fun sttLabel() = "Speech language: " + if (prefs.sttLanguage == "en") "English (tap for auto: Hindi/Bengali too)" else "Auto-detect (tap for English only)"
+
+    /** Runs slow work off the screen thread and shows the result. */
+    private fun background(start: String, work: () -> String) {
+        setStatus(start)
+        Thread {
+            val msg = runCatching { work() }.getOrElse { "Failed: ${it.message}" }
+            setStatus(msg)
+            runOnUiThread { refresh() }
+        }.start()
+    }
 
     private fun buildUi() {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(18), dp(18), dp(40)) }
@@ -95,10 +108,8 @@ class MainActivity : Activity() {
         })
         col.addView(button("Allow background battery use") { askBattery() })
 
-        col.addView(heading("2. Files"))
-        col.addView(button("Pick command model (topshe_v2.gguf)") { pick(PICK_GGUF) })
-        col.addView(button("Pick chat model (topshe_chat_v3.gguf) - optional, smarter") { pick(PICK_CHAT) })
-        col.addView(note("Voice models: wake word, voice check and speech-to-text. Free and open source, about 75 MB, downloaded once."))
+        col.addView(heading("2. Voice models"))
+        col.addView(note("Wake word, voice check and Whisper speech-to-text. Free and open source, about 250 MB, downloaded once (use Wi-Fi)."))
         col.addView(button("Download voice models") { downloadVoiceModels() })
 
         col.addView(heading("3. Teach it your voice"))
@@ -119,8 +130,37 @@ class MainActivity : Activity() {
             status.text = if (lines.isEmpty()) "Saved. (Download voice models first to check them.)" else "Saved ${lines.size} spelling(s). Restart listening."
         })
 
+        col.addView(heading("5. Brain and learning"))
+        col.addView(note("Topshe learns from everything you say. Once a week it retrains itself and the phone downloads the new brain on Wi-Fi, only if it scored better in tests. Needs a GitHub token: github.com -> Settings -> Developer settings -> Fine-grained tokens -> only the Topshe-v2 repo -> Contents: Read and write."))
+        val token = EditText(this).apply {
+            hint = "Paste GitHub token"; setText(prefs.githubToken)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        col.addView(token)
+        col.addView(button("Save token and sync now") {
+            prefs.githubToken = token.text.toString()
+            Sync.schedule(this)
+            background("Syncing...") { Sync.runSync(this) { setStatus(it) } }
+        })
+        col.addView(button("Go back to the previous brain") { background("Switching...") { Sync.swapToPrevious(this) } })
+        col.addView(button("Speed test (picks the fastest setting)") {
+            background("Testing speed... (takes about a minute)") { Brain.speedTest(this, Memory(this).facts()) }
+        })
+        col.addView(note("Before the first weekly brain arrives, you can use the older v2 model:"))
+        col.addView(button("Pick older model (topshe_v2.gguf)") { pick(PICK_GGUF) })
+        col.addView(buttonV(sttLabel()) { b ->
+            prefs.sttLanguage = if (prefs.sttLanguage == "en") "" else "en"
+            (b as Button).text = sttLabel()
+            status.text = "Restart listening to apply."
+        })
+
+        col.addView(heading("What Topshe knows about you"))
+        facts = TextView(this).apply { textSize = 13f; setTextIsSelectable(true) }
+        col.addView(facts)
+        col.addView(note("Say \"Topshe, remember that ...\" to add, \"Topshe, forget ...\" to remove. If Topshe gets something wrong, say \"no, I meant ...\" and it won't make that mistake again."))
+
         col.addView(heading("Activity"))
-        col.addView(button("Refresh log") { refresh() })
+        col.addView(button("Refresh") { refresh() })
         log = TextView(this).apply { textSize = 12f; typeface = Typeface.MONOSPACE; setTextIsSelectable(true) }
         col.addView(log)
 
@@ -158,6 +198,11 @@ class MainActivity : Activity() {
         }
         startBtn.text = if (s == ListenerService.State.OFF || s == ListenerService.State.PAUSED) "Start listening" else "Stop (kill)"
         log.text = ActivityLog.read(this)
+        val mem = Memory(this)
+        val f = mem.facts()
+        facts.text = (if (f.isEmpty()) "Nothing yet." else f.joinToString("\n") { "- $it" }) +
+            "\n\nBrain: " + (if (Prefs(this).brainVersion > 0) "v${Prefs(this).brainVersion} (weekly)" else if (Store.model(this).exists()) "older v2" else "none yet") +
+            " | ${mem.interactionCount()} things learned from so far"
     }
 
     private fun toggle() {
@@ -202,10 +247,9 @@ class MainActivity : Activity() {
         if (resultCode != RESULT_OK) return
         val target = when (requestCode) {
             PICK_GGUF -> Store.model(this)
-            PICK_CHAT -> Store.chatModel(this)
             else -> return
         }
-        setStatus("Copying file... (models are 1-2 GB, give it a minute or two)")
+        setStatus("Copying file... (about 1 GB, give it a minute)")
         Thread {
             try {
                 val tmp = File(target.path + ".tmp")

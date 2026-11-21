@@ -318,21 +318,19 @@ def user_rows(interactions, facts):
       - corrections ("no, I meant ...") -> the corrected action
     Cancelled actions and Topshe's own chat answers are never trained on.
     """
-    out, seen = [], set()
+    final = {}   # last word wins: a later correction or cancel overrides an earlier "ok"
     for it in interactions:
         heard = (it.get("heard") or "").strip()
-        if not heard:
-            continue
+        if heard:
+            final[heard.lower()] = (heard, it)
+    out = []
+    for heard, it in final.values():
         outcome = it.get("outcome")
         action = it.get("corrected_to") if outcome == "corrected" else it.get("action")
         if outcome not in ("ok", "confirmed", "corrected") or not isinstance(action, dict):
             continue
         if action.get("action") == "chat":
             continue
-        key = heard.lower()
-        if key in seen:
-            continue
-        seen.add(key)
         out.append(row(with_facts(CMD_SYSTEM, facts), heard, dumps(action), "user"))
     return out
 
@@ -347,6 +345,7 @@ if __name__ == "__main__":
     demo = [{"heard": "wake me at 7", "action": {"action": "set_alarm", "hour": 7, "minute": 0, "day": "next"}, "outcome": "ok"},
             {"heard": "call rahul", "action": {"action": "call", "contact": "Rahul"}, "outcome": "corrected",
              "corrected_to": {"action": "call", "contact": "Rahul Sen"}},
-            {"heard": "message maa hi", "action": {"action": "message"}, "outcome": "cancelled"}]
+            {"heard": "message maa hi", "action": {"action": "message"}, "outcome": "cancelled"},
+            {"heard": "call rahul", "action": {"action": "call", "contact": "Rahul"}, "outcome": "ok"}]
     for r in user_rows(demo, ["Rahul means Rahul Sen"]):
         print("USER ROW:", r["user"], "=>", r["assistant"])

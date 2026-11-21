@@ -55,7 +55,7 @@ android {
 
     packaging {
         jniLibs {
-            pickFirsts += listOf("**/libc++_shared.so", "**/libjnidispatch.so")
+            pickFirsts += listOf("**/libc++_shared.so")
         }
     }
 }
@@ -66,7 +66,6 @@ dependencies {
     // (sherpa-onnx Kotlin API is vendored in src/main/kotlin/com/k2fsa; native libs come from CI)
     // Unpacks the wake-word model download (.tar.bz2)
     implementation("org.apache.commons:commons-compress:1.26.2")
-    // Offline speech-to-text
-    implementation("com.alphacephei:vosk-android:0.3.47@aar")
-    implementation("net.java.dev.jna:jna:5.13.0@aar")
+    // Daily background sync (upload what you said, download new brains)
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 }

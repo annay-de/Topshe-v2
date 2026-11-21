@@ -19,6 +19,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 /**
  * The listening service. Three states, all switchable from the notification and the tile:
@@ -27,6 +28,9 @@ import kotlinx.coroutines.launch
  *  - OFF:       killed. Mic off, model unloaded, nothing running.
  * It never turns itself on - only you can (app, tile or notification).
  */
+private val CORRECTION = Regex("^(no|nope|nahi|wrong|not that|that's wrong|that is wrong)(?:[,.! ]+((i meant|i said|i want|i wanted)[,: ]*)?(.*))?[.!]?$",
+    RegexOption.IGNORE_CASE)
+
 class ListenerService : Service() {
 
     enum class State { OFF, STARTING, LISTENING, BUSY, PAUSED }
@@ -35,6 +39,7 @@ class ListenerService : Service() {
         const val ACTION_START = "org.annay.topshe.START"
         const val ACTION_PAUSE = "org.annay.topshe.PAUSE"
         const val ACTION_KILL = "org.annay.topshe.KILL"
+        const val ACTION_RELOAD = "org.annay.topshe.RELOAD"   // a new brain was installed
         private const val CHANNEL = "topshe_listener"
         private const val NOTIF_ID = 7
 
@@ -55,6 +60,11 @@ class ListenerService : Service() {
     private lateinit var speaker: Speaker
     private lateinit var actions: Actions
     private lateinit var music: Music
+    private lateinit var memory: Memory
+
+    /** The last thing Topshe did, so "no, I meant ..." can correct it. */
+    private data class Last(val heard: String, val action: JSONObject, val at: Long)
+    private var last: Last? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -62,14 +72,17 @@ class ListenerService : Service() {
         super.onCreate()
         prefs = Prefs(this)
         speaker = Speaker(this)
-        actions = Actions(this, speaker)
+        memory = Memory(this)
         music = Music(this, speaker)
+        actions = Actions(this, speaker, memory, music)
+        Sync.schedule(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_KILL -> kill()
             ACTION_PAUSE -> pause()
+            ACTION_RELOAD -> reload()
             else -> startListening()
         }
         return START_NOT_STICKY   // never restarts on its own
@@ -91,15 +104,14 @@ class ListenerService : Service() {
                     ActivityLog.add(this@ListenerService, "Can't start. Missing: ${missing.joinToString()}")
                     kill(); return@launch
                 }
-                val chat = Store.chatModel(this@ListenerService).takeIf { it.exists() }?.absolutePath
-                if (!Brain.loaded && !Brain.load(Store.model(this@ListenerService).absolutePath, chat)) {
+                if (!Brain.load(this@ListenerService)) {
                     ActivityLog.add(this@ListenerService, "Model failed to load")
                     kill(); return@launch
                 }
                 val e = Ear(this@ListenerService, prefs).also { ear = it }
                 e.open()
                 setState(State.LISTENING, "Listening for \"Topshe\"")
-                ActivityLog.add(this@ListenerService, "Listening")
+                ActivityLog.add(this@ListenerService, "Listening (brain ${Brain.loadedName}, ${memory.facts().size} facts)")
                 while (isActive && e.waitForWake { isActive }) {
                     if (!handleWake(e)) { pauseFromInside(); break }
                     e.flush()
@@ -126,32 +138,84 @@ class ListenerService : Service() {
             ActivityLog.add(this, "Ignored a wake - voice score ${score?.let { "%.2f".format(it) } ?: "n/a"}")
             return true
         }
-        val heard = e.transcribe(u.speech).replace(Regex("^(hey )?topshe\\s*", RegexOption.IGNORE_CASE), "").trim()
+        val heard = e.transcribe(u.speech)
+            .replace(Regex("^(hey |ok )?(top ?sh(e|ay|ey|ae)|topsy|tapshe)[,.!]?\\s*", RegexOption.IGNORE_CASE), "").trim()
         ActivityLog.add(this, "Heard (voice %.2f): \"%s\"".format(score, heard))
         if (heard.isBlank()) { speaker.say("Sorry, I didn't catch that."); return true }
-
         setState(State.BUSY, "Working: $heard")
-        // Music / media first: simple rules, instant, no model needed
-        if (music.handle(heard)) { ActivityLog.add(this, "Media command"); return true }
-        val cmd = Brain.command(heard)
-        if (cmd == null) { speaker.say("Sorry, I got confused. Try again?"); return true }
 
         val asker = object : Actions.Asker {
-          override suspend fun ask(question: String): String? {
-            speaker.say(question)
-            e.flush(150)
-            val reply = e.capture(waitMs = 5000, endSilenceMs = 800, maxMs = 6000)
-            if (reply.speech.isEmpty()) return null
-            val s = e.voiceScore(reply.speech)
-            // Short answers like "yes" may be too short to score; that's fine (you were just verified).
-            // But if it clearly isn't your voice, refuse.
-            if (s != null && s < prefs.voiceThreshold) {
-                ActivityLog.add(this@ListenerService, "Ignored a reply - not your voice (%.2f)".format(s)); return null
+            override suspend fun ask(question: String): String? {
+                speaker.say(question)
+                e.flush(150)
+                val reply = e.capture(waitMs = 5000, endSilenceMs = 800, maxMs = 6000)
+                if (reply.speech.isEmpty()) return null
+                val s = e.voiceScore(reply.speech)
+                // Short answers like "yes" may be too short to score; that's fine (you were just verified).
+                // But if it clearly isn't your voice, refuse.
+                if (s != null && s < prefs.voiceThreshold) {
+                    ActivityLog.add(this@ListenerService, "Ignored a reply - not your voice (%.2f)".format(s)); return null
+                }
+                return e.transcribe(reply.speech).also { ActivityLog.add(this@ListenerService, "Reply: \"$it\"") }
             }
-            return e.transcribe(reply.speech).also { ActivityLog.add(this@ListenerService, "Reply: \"$it\"") }
-          }
         }
-        return actions.run(cmd, heard, asker)
+
+        // 1) "No, I meant ..." within 2 minutes corrects the last action (and is remembered)
+        val correction = CORRECTION.find(heard)
+        val prev = last
+        if (correction != null && prev != null && System.currentTimeMillis() - prev.at < 120_000) {
+            val fixed = correction.groupValues[4].trim().ifBlank { asker.ask("Okay, what did you mean?") ?: "" }
+            if (fixed.isBlank()) return true
+            val newCmd = musicRuleAsAction(fixed) ?: Brain.command(fixed, memory.facts())
+                ?: run { speaker.say("Sorry, I still didn't get it."); return true }
+            memory.addCorrection(prev.heard, newCmd)
+            memory.log(prev.heard, prev.action, "corrected", newCmd)
+            ActivityLog.add(this, "Learned: \"${prev.heard}\" -> $newCmd")
+            val r = actions.run(newCmd, fixed, asker)
+            last = Last(prev.heard, newCmd, System.currentTimeMillis())
+            return r.keepListening
+        }
+
+        // 2) Something you corrected before? Do what you meant last time.
+        val learned = memory.correctionFor(heard)?.also { ActivityLog.add(this, "Using your earlier correction") }
+
+        // 3) Music / media: simple rules, instant
+        if (learned == null && music.handle(heard)) {
+            musicRuleAsAction(heard)?.let { memory.log(heard, it, "ok"); last = Last(heard, it, System.currentTimeMillis()) }
+            return true
+        }
+
+        // 4) The brain
+        val cmd = learned ?: Brain.command(heard, memory.facts())
+        if (cmd == null) { speaker.say("Sorry, I got confused. Try again?"); memory.log(heard, null, "failed"); return true }
+
+        val r = actions.run(cmd, heard, asker)
+        memory.log(heard, cmd, r.outcome)
+        last = if (r.outcome == "ok" || r.outcome == "confirmed") Last(heard, cmd, System.currentTimeMillis()) else null
+        return r.keepListening
+    }
+
+    /** The music rules' meaning, as an action (for logging and corrections). */
+    private fun musicRuleAsAction(t: String): JSONObject? {
+        val s = t.lowercase().trim()
+        return when {
+            s.startsWith("play ") && s.endsWith(" on youtube") -> JSONObject().put("action", "media").put("op", "play")
+                .put("query", s.removePrefix("play ").removeSuffix(" on youtube")).put("source", "youtube")
+            s.startsWith("play ") && s !in setOf("play music", "play some music", "play next song") -> JSONObject().put("action", "media")
+                .put("op", "play").put("query", s.removePrefix("play ").removeSuffix(" on spotify")).put("source", "spotify")
+            else -> null
+        }
+    }
+
+    /** Brain swapped by Sync: reload it (keeps listening if it was). */
+    private fun reload() {
+        val wasOn = loop?.isActive == true
+        val job = loop
+        scope.launch {
+            job?.cancelAndJoin()
+            Brain.unload()
+            if (wasOn) startListening()
+        }
     }
 
     private fun pauseFromInside() {

@@ -58,6 +58,25 @@ class Music(private val ctx: Context, private val speaker: Speaker) {
         return true
     }
 
+    /** Runs a "media" action from the brain (when the quick rules didn't catch the words). */
+    suspend fun runAction(a: org.json.JSONObject): Boolean {
+        when (a.optString("op")) {
+            "play" -> {
+                val q = a.optString("query")
+                if (q.isBlank()) resume()
+                else if (a.optString("source") == "youtube") youtube(q) else spotify(q)
+            }
+            "pause" -> key(KeyEvent.KEYCODE_MEDIA_PAUSE, "Paused.")
+            "next" -> key(KeyEvent.KEYCODE_MEDIA_NEXT, null)
+            "previous" -> key(KeyEvent.KEYCODE_MEDIA_PREVIOUS, null)
+            "volume_up" -> volume(AudioManager.ADJUST_RAISE)
+            "volume_down" -> volume(AudioManager.ADJUST_LOWER)
+            "mute" -> volume(AudioManager.ADJUST_MUTE)
+            else -> return false
+        }
+        return true
+    }
+
     private fun launch(i: Intent): Boolean = runCatching {
         ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); true
     }.getOrElse { ActivityLog.add(ctx, "Media launch failed: ${it.message}"); false }

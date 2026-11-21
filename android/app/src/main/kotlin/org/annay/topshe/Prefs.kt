@@ -24,24 +24,63 @@ class Prefs(ctx: Context) {
     var wakeSpellings: String
         get() = sp.getString("wakeSpellings", "TOPSHE, TOP SHAY, TOPSHAY") ?: "TOPSHE"
         set(v) = sp.edit().putString("wakeSpellings", v).apply()
+
+    /** CPU threads for the brain (set by the speed test). */
+    var threads: Int
+        get() = sp.getInt("threads", 4)
+        set(v) = sp.edit().putInt("threads", v).apply()
+
+    /** GitHub token (fine-grained, Contents read/write on the Topshe-v2 repo): uploads data, downloads brains. */
+    var githubToken: String
+        get() = sp.getString("githubToken", "") ?: ""
+        set(v) = sp.edit().putString("githubToken", v.trim()).apply()
+
+    var githubRepo: String
+        get() = sp.getString("githubRepo", "annay-de/Topshe-v2") ?: "annay-de/Topshe-v2"
+        set(v) = sp.edit().putString("githubRepo", v.trim()).apply()
+
+    /** Version of the brain on the phone (0 = none from the weekly pipeline yet). */
+    var brainVersion: Int
+        get() = sp.getInt("brainVersion", 0)
+        set(v) = sp.edit().putInt("brainVersion", v).apply()
+
+    var previousBrainVersion: Int
+        get() = sp.getInt("previousBrainVersion", 0)
+        set(v) = sp.edit().putInt("previousBrainVersion", v).apply()
+
+    /** How many lines of the interaction log have been uploaded already. */
+    var uploadedLines: Int
+        get() = sp.getInt("uploadedLines", 0)
+        set(v) = sp.edit().putInt("uploadedLines", v).apply()
+
+    /** Speech-to-text language: "en" (default) or "" (auto-detect, better for Hindi/Bengali). */
+    var sttLanguage: String
+        get() = sp.getString("sttLanguage", "en") ?: "en"
+        set(v) = sp.edit().putString("sttLanguage", v).apply()
 }
 
 /** Where Topshe keeps its files (all inside the app's private storage). */
 object Store {
-    fun model(ctx: Context) = File(ctx.filesDir, "topshe.gguf")
-    fun chatModel(ctx: Context) = File(ctx.filesDir, "topshe_chat.gguf")
-    fun speechModel(ctx: Context) = File(ctx.filesDir, "vosk-model")
+    fun brain(ctx: Context) = File(ctx.filesDir, "topshe_brain.gguf")              // weekly brain (Qwen 3.5 4B)
+    fun previousBrain(ctx: Context) = File(ctx.filesDir, "topshe_brain_prev.gguf")
+    fun promptTemplate(ctx: Context) = File(ctx.filesDir, "prompt_template.json")
+    fun previousPromptTemplate(ctx: Context) = File(ctx.filesDir, "prompt_template_prev.json")
+    fun model(ctx: Context) = File(ctx.filesDir, "topshe.gguf")                    // older v2 model (fallback)
+    fun sttModel(ctx: Context) = File(ctx.filesDir, "whisper")
     fun wakeModel(ctx: Context) = File(ctx.filesDir, "kws")
     fun speakerModel(ctx: Context) = File(ctx.filesDir, "speaker.onnx")
     fun voiceProfile(ctx: Context) = File(ctx.filesDir, "voice_profile_v2.bin")
     fun logFile(ctx: Context) = File(ctx.filesDir, "activity.log")
+    fun memoryDir(ctx: Context) = File(ctx.filesDir, "memory").apply { mkdirs() }
+
+    fun hasBrain(ctx: Context) = brain(ctx).exists() || model(ctx).exists()
 
     fun voiceModelsReady(ctx: Context) =
         File(wakeModel(ctx), "tokens.txt").exists() && speakerModel(ctx).length() > 1_000_000 &&
-            (File(speechModel(ctx), "conf").exists() || File(speechModel(ctx), "am").exists())
+            (sttModel(ctx).listFiles()?.any { it.name.contains("encoder") } == true)
 
     fun missing(ctx: Context): List<String> = buildList {
-        if (!model(ctx).exists()) add("Topshe model (.gguf)")
+        if (!hasBrain(ctx)) add("brain (sync with GitHub, or pick a .gguf)")
         if (!voiceModelsReady(ctx)) add("voice models (download)")
         if (!voiceProfile(ctx).exists()) add("your voice recording")
     }
