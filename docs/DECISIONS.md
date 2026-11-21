@@ -27,3 +27,14 @@ v1 (July 2026) was a large design: Stata/LaTeX/git tools, a laptop link over Tai
 - **Tone:** the chat prompt tells Topshe to talk plainly, like to an adult, with no lectures. The base model's built-in limits are unchanged.
 - **APK built by GitHub Actions:** no Android Studio needed. llama.cpp is pinned to release `b6100` so upstream changes can't break the build.
 - **Music is handled by simple rules before the model:** anything starting with "play", plus pause, next, previous and volume. This is instant, works without retraining, and uses Android's standard media buttons and Spotify's "play from search" (the same route Google Assistant uses), so it works with the phone locked. YouTube finds the top result without an API key and opens it in Brave (or the YouTube app if Brave isn't installed). Android won't show a page over the lock screen, so YouTube starts once you unlock.
+
+## v2.1: self-learning brain (Nov 2026)
+- **One brain, Qwen 3.5 4B (Mar 2026), for commands and chat.** It replaces Qwen 2.5 (2024). One model means less memory (Android kills big apps), one retrain, and one model learning from everything. Prompt caching keeps commands fast: the fixed instructions are processed once and restored each time. If the speed test shows commands are too slow, a small command-only model can be added later.
+- **16-bit LoRA training, not 4-bit:** Unsloth advises against 4-bit training for Qwen 3.5.
+- **Same llama.cpp version (b12602) in the app and in the trainer's GGUF export**, so the phone can always read the model. The trainer also saves `prompt_template.json` next to the model, so the phone uses exactly the training format.
+- **Memory instead of retraining for facts:** small models trained on facts mix them up. Facts go into the prompt, while retraining teaches phrasing and corrections.
+- **Train only on trusted data:** commands that weren't cancelled, and corrections. Never Topshe's own chat answers, because training on its own output slowly makes a model worse.
+- **Quality gate:** a new brain is published only if it passes the tests and is no worse than the current one, both on synthetic tests and on your own held-back commands. The phone keeps the previous brain for a one-tap rollback.
+- **Each week trains from the base model** on all data so far, not on top of last week's brain, so errors can't pile up.
+- **Whisper base (multilingual, offline) replaces Vosk** for better accuracy on Indian English. An Auto setting handles Hindi and Bengali.
+- **Pipeline cost:** the GitHub Actions checks run only on Sunday and Monday, to keep within the free minutes for private repos. Kaggle uses about 3 GPU hours a week.

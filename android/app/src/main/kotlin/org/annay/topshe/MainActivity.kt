@@ -109,7 +109,7 @@ class MainActivity : Activity() {
         col.addView(button("Allow background battery use") { askBattery() })
 
         col.addView(heading("2. Voice models"))
-        col.addView(note("Wake word, voice check and Whisper speech-to-text. Free and open source, about 250 MB, downloaded once (use Wi-Fi)."))
+        col.addView(note("Wake word, voice check and Whisper speech-to-text. Free and open source, about 330 MB to download once (use Wi-Fi)."))
         col.addView(button("Download voice models") { downloadVoiceModels() })
 
         col.addView(heading("3. Teach it your voice"))

@@ -95,8 +95,8 @@ object VoiceModels {
             last?.let { throw it }
         }
         if (Store.sttModel(ctx).listFiles()?.any { it.name.contains("encoder") } != true) {
-            progress("Downloading speech-to-text model (Whisper, ~200 MB)...")
-            untarBz2(STT_URL, Store.sttModel(ctx)) { name -> name.endsWith(".onnx") || name.endsWith("tokens.txt") }
+            progress("Downloading speech-to-text model (Whisper, ~280 MB download)...")
+            untarBz2(STT_URL, Store.sttModel(ctx)) { name -> name.contains(".int8.") || name.endsWith("tokens.txt") }
         }
         progress("Voice models ready.")
     }

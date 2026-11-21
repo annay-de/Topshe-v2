@@ -1,56 +1,63 @@
 # Topshe v2
 
-Annay's personal voice assistant for Android. Say **"Topshe"** and it wakes up, but only for Annay's voice.
-It runs offline on the phone, using its own fine-tuned model.
+Annay's personal voice assistant for Android. Say **"Topshe"** and it wakes up, but only for Annay's voice. It runs on the phone, learns from everything you say, and **retrains itself every week**.
 
-- **Wakes only for you:** the wake word ("Topshe") plus a voice check. Both are free open-source models (sherpa-onnx), so no account or key is needed.
-- **You decide when it listens:** a quick-settings tile, a notification with **Pause** and **Kill** buttons, or say "Topshe, go to sleep". It never turns itself on.
-- **Offline:** speech-to-text (Vosk), the model (Qwen 2.5 1.5B, fine-tuned) and the voice all run on the phone. The internet is only used once, to download the speech model.
-- **Can't go rogue:** it can only do actions from a fixed list. Calls and messages always ask "yes or no" first. If two contacts have the same name, it asks which one.
-
-## What it can do
+## What it does
 
 | Say | Does |
 |---|---|
-| "Topshe, play music" | Resumes Spotify (works with the phone locked) |
-| "Topshe, play Blinding Lights" / "...on Spotify" | Spotify finds and plays it |
-| "Topshe, play lofi beats on YouTube" | Opens the top YouTube result in Brave (keeps playing with the screen off) |
-| "Topshe, pause" / "next" / "previous" / "volume up" | Media controls for whatever is playing |
-| "Topshe, wake me up at 6:45" | Sets an alarm |
-| "Topshe, timer 10 minutes" | Starts a timer |
-| "Topshe, remind me to call Maa in 20 minutes" | Sets a reminder (notification) |
-| "Topshe, open Spotify" | Opens the app |
-| "Topshe, call Tanmay" | Asks which Tanmay (if needed), then "yes or no", then calls |
-| "Topshe, message Rahul I'm on my way" | Confirms, then opens WhatsApp with the text typed (you tap send). Say "by SMS" to send an SMS directly |
-| "Topshe, wifi off" | Runs the Tasker task named `wifi off` |
-| "Topshe, who directed Pather Panchali?" | Answers (using the smarter 3B chat model if installed) |
-| "Topshe, go to sleep" | Pauses listening |
+| "Topshe, play music" / "play Blinding Lights" | Spotify resumes, or finds and plays the song (works with the phone locked) |
+| "Topshe, play lofi beats on YouTube" | Opens the top result in Brave (keeps playing with the screen off) |
+| "Topshe, pause" / "next" / "volume up" | Media controls |
+| "Topshe, wake me up at 6:45" / "timer 10 minutes" | Alarm or timer |
+| "Topshe, remind me to call Maa in 20 minutes" | Reminder |
+| "Topshe, call Tanmay" / "message Rahul I'm on my way" | Asks which person if several match, then "yes or no", then calls or sends |
+| "Topshe, open Zerodha" / "wifi off" | Opens an app, or runs a Tasker task of that name |
+| "Topshe, remember that my shuttle leaves at 8:10" | Saves it. Topshe uses it from then on ("when's my shuttle?") |
+| "Topshe, forget that ..." | Removes it |
+| "No, I meant ..." (after a mistake) | Fixes it, and never makes that mistake again |
+| "Topshe, who directed Pather Panchali?" | Answers |
+| "Topshe, go to sleep" | Stops listening |
 
-## Setup (once)
+## How it learns
 
-1. **Install the app:** go to this repo's **Releases** on your phone, download the latest `topshe-v2-build-N.apk` and open it. Allow "install unknown apps" if asked.
-2. Open **Topshe** and go through the steps on screen:
-   1. **Permissions:** tap all three buttons.
-   2. **Files:** pick `topshe_v2.gguf` (from the Kaggle notebook output), then tap **Download voice models** (about 75 MB, once, on Wi-Fi).
-   3. **Teach it your voice:** tap and talk for 25 seconds.
-3. Tap **Start listening**. Then add the **Topshe** tile to your quick settings: pull down twice, tap the pencil and drag Topshe in.
+```
+you talk -> phone log -> (daily, Wi-Fi) private `data` branch
+                                   |
+               Sunday 01:00 IST: GitHub starts training on Kaggle (Qwen 3.5 4B + your data)
+                                   |
+                 tests: is it at least as good as the current brain?
+                     no -> thrown away        yes -> published as model-N
+                                   |
+                 phone downloads it on Wi-Fi and switches (old one kept for 1-tap rollback)
+```
 
-**Realme tip:** go to Settings, then Apps, then Topshe, then Battery, and choose **Allow background activity**. Also lock Topshe in Recent apps (pull its card down). Otherwise Realme UI may kill it.
+- **Instant, no retraining:**
+  - facts you ask it to remember, which go into every prompt
+  - your corrections
+  - which contact you meant
+- **Weekly:** your real commands and corrections are added to training (counted 3x), so it learns your phrasing.
+- **Safety:**
+  - Only trusted examples are trained on: commands you didn't cancel, and your corrections. Never its own chat answers.
+  - Each new brain must pass held-back tests, including your own past commands, and must not score lower than the current brain.
 
-## Tuning
+## Privacy and safety
 
-The **Activity** log in the app shows every wake: what it heard and your voice score.
-- If it ignores you, lower **Voice check strictness**.
-- If it doesn't wake, lower **Wake word strictness**, or add another spelling of how you say it (e.g. `TOP SHAY`).
-- If it wakes when nobody said Topshe, raise **Wake word strictness**.
+- The wake word, voice check, speech-to-text and brain all run **on the phone**.
+- Your interaction log goes only to this private repo's `data` branch and to a private Kaggle dataset, for training.
+- It can only do actions from a fixed list. Calls and messages always ask "yes or no". It ignores voices that aren't yours.
+- **Kill switch:** the notification's **Kill** button or the quick-settings tile turns everything off. It never turns itself on.
+
+## Setup
+
+See **[docs/SETUP.md](docs/SETUP.md)**.
 
 ## Layout
 
 ```
-android/        the app (Kotlin + a small C++ bridge to llama.cpp)
-training/       data generator + Kaggle notebook that made topshe_v2.gguf
-docs/           roadmap and decisions
-.github/        builds the APK automatically on every push
+android/              the app (Kotlin + C++ bridge to llama.cpp b12602)
+training/             data generator, trainer notebook (Qwen 3.5 4B), weekly pipeline
+.github/workflows/    build-apk.yml (app), retrain.yml (weekly learning)
+docs/                 setup, decisions, roadmap
+data branch           your phone's uploads + training status (private)
 ```
-
-See [docs/DECISIONS.md](docs/DECISIONS.md) for what was kept from Topshe v1 and why.
