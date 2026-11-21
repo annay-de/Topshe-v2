@@ -8,3 +8,4 @@ local.properties
 *.iml
 .idea/
 android/app/src/main/jniLibs/
+__pycache__/

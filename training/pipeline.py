@@ -1,0 +1,249 @@
+"""
+Topshe's weekly self-retraining, run by GitHub Actions (.github/workflows/retrain.yml).
+
+  python training/pipeline.py start     # Sunday: pack your phone data, start training on Kaggle
+  python training/pipeline.py collect   # every few hours: when training is done, test it and publish
+
+The phone uploads its interaction log + facts to the `data` branch (checked out at ./databranch).
+A new brain is only published if it passes the quality gate - it must not be worse than the
+current one - so a bad week of data can never make Topshe dumber.
+"""
+import glob
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+DATA = ROOT / "databranch"
+BUILD = ROOT / "build"
+PENDING = DATA / "retrain" / "pending.json"
+HISTORY = DATA / "retrain" / "history.jsonl"
+USER = os.environ.get("KAGGLE_USERNAME", "").strip().lower()
+DATASET = f"{USER}/topshe-data"
+KERNEL = f"{USER}/topshe-trainer"
+REPO = os.environ.get("GITHUB_REPOSITORY", "annay-de/topshe-v2")
+PART_BYTES = 1900 * 1024 * 1024          # GitHub release files must be < 2 GB
+
+# Quality gate
+MIN_VALID = 0.98            # share of replies that are valid JSON
+MIN_EXACT = 0.90            # share of held-back commands fully right
+MAX_DROP = 0.02             # allowed drop vs the current brain (noise margin)
+
+
+def now():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def run(cmd, check=True, capture=False):
+    print("$", " ".join(cmd) if isinstance(cmd, list) else cmd, flush=True)
+    r = subprocess.run(cmd, check=False, text=True, capture_output=True)
+    if r.stdout:
+        print(r.stdout[-3000:])
+    if r.stderr:
+        print(r.stderr[-3000:], file=sys.stderr)
+    if check and r.returncode != 0:
+        raise SystemExit(f"command failed ({r.returncode}): {cmd}")
+    return r
+
+
+def kaggle(*args, check=True):
+    return run(["kaggle", *args], check=check)
+
+
+def load_pending():
+    return json.loads(PENDING.read_text()) if PENDING.exists() else None
+
+
+def save_pending(p):
+    PENDING.parent.mkdir(parents=True, exist_ok=True)
+    PENDING.write_text(json.dumps(p, indent=1))
+
+
+def log_history(entry):
+    HISTORY.parent.mkdir(parents=True, exist_ok=True)
+    with open(HISTORY, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+# ---------------------------------------------------------------- start
+
+def start():
+    if not USER:
+        raise SystemExit("KAGGLE_USERNAME secret is missing")
+    p = load_pending()
+    if p and p.get("status") == "training":
+        age_h = (time.time() - p.get("started_ts", 0)) / 3600
+        if age_h < 16:
+            print(f"A training run is already in progress ({age_h:.1f} h). Nothing to do.")
+            return
+    # 1) pack phone data
+    ds = BUILD / "dataset"
+    shutil.rmtree(ds, ignore_errors=True)
+    ds.mkdir(parents=True)
+    lines = []
+    for f in sorted(glob.glob(str(DATA / "data" / "interactions" / "*.jsonl"))):
+        lines += [l for l in Path(f).read_text(encoding="utf-8").splitlines() if l.strip()]
+    (ds / "user_interactions.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    facts = DATA / "data" / "facts.json"
+    (ds / "facts.json").write_text(facts.read_text(encoding="utf-8") if facts.exists() else '{"facts": []}', encoding="utf-8")
+    (ds / "dataset-metadata.json").write_text(json.dumps(
+        {"title": "topshe-data", "id": DATASET, "licenses": [{"name": "CC0-1.0"}]}))
+    print(f"Packed {len(lines)} interactions")
+
+    # 2) upload as a private Kaggle dataset (new version each week)
+    r = kaggle("datasets", "version", "-p", str(ds), "-m", f"week of {now()[:10]}", check=False)
+    if r.returncode != 0:
+        kaggle("datasets", "create", "-p", str(ds))          # first time (private by default)
+    for _ in range(40):
+        s = kaggle("datasets", "status", DATASET, check=False).stdout.lower()
+        if "ready" in s:
+            break
+        time.sleep(15)
+
+    # 3) push the trainer notebook; pushing starts a run on a Kaggle GPU
+    run([sys.executable, str(ROOT / "training" / "build_notebook.py")])
+    kd = BUILD / "kernel"
+    shutil.rmtree(kd, ignore_errors=True)
+    kd.mkdir(parents=True)
+    shutil.copy(ROOT / "training" / "topshe_trainer.ipynb", kd / "topshe-trainer.ipynb")
+    (kd / "kernel-metadata.json").write_text(json.dumps({
+        "id": KERNEL, "title": "topshe-trainer", "code_file": "topshe-trainer.ipynb",
+        "language": "python", "kernel_type": "notebook", "is_private": True,
+        "enable_gpu": True, "enable_internet": True, "enable_tpu": False,
+        "dataset_sources": [DATASET], "competition_sources": [], "kernel_sources": [], "model_sources": [],
+    }, indent=1))
+    r = kaggle("kernels", "push", "-p", str(kd), "--accelerator", "NvidiaTeslaT4", check=False)
+    if r.returncode != 0:
+        kaggle("kernels", "push", "-p", str(kd))
+    save_pending({"status": "training", "started": now(), "started_ts": time.time(),
+                  "kernel": KERNEL, "interactions": len(lines)})
+    print("Training started on Kaggle")
+
+
+# ---------------------------------------------------------------- collect
+
+def kernel_status():
+    out = kaggle("kernels", "status", KERNEL, check=False).stdout.lower()
+    for s in ("complete", "error", "cancel", "running", "queued"):
+        if s in out:
+            return s
+    return "unknown"
+
+
+def previous_manifest():
+    r = run(["gh", "release", "list", "-R", REPO, "--limit", "100", "--json", "tagName"], check=False)
+    tags = [t["tagName"] for t in json.loads(r.stdout or "[]") if t["tagName"].startswith("model-")]
+    if not tags:
+        return None
+    latest = max(tags, key=lambda t: int(t.split("-")[1]))
+    d = BUILD / "prev"
+    shutil.rmtree(d, ignore_errors=True)
+    run(["gh", "release", "download", latest, "-R", REPO, "-p", "manifest.json", "-D", str(d)], check=False)
+    f = d / "manifest.json"
+    return json.loads(f.read_text()) if f.exists() else None
+
+
+def gate(ev, prev):
+    s = ev.get("synthetic") or {}
+    reasons = []
+    if s.get("valid", 0) < MIN_VALID:
+        reasons.append(f"valid JSON {s.get('valid', 0):.2f} < {MIN_VALID}")
+    if s.get("exact", 0) < MIN_EXACT:
+        reasons.append(f"accuracy {s.get('exact', 0):.2f} < {MIN_EXACT}")
+    if prev:
+        pe = prev.get("eval", {})
+        if s.get("exact", 0) < (pe.get("synthetic") or {}).get("exact", 0) - MAX_DROP:
+            reasons.append("worse than the current brain on test commands")
+        y, py = ev.get("yours"), pe.get("yours")
+        if y and py and y.get("n", 0) >= 10 and y.get("exact", 0) < py.get("exact", 0) - MAX_DROP:
+            reasons.append("worse than the current brain on your own commands")
+    return reasons
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def collect():
+    p = load_pending()
+    if not p or p.get("status") != "training":
+        print("No training in progress.")
+        return
+    st = kernel_status()
+    print("Kaggle status:", st)
+    if st in ("running", "queued", "unknown"):
+        if time.time() - p["started_ts"] > 16 * 3600:
+            p.update(status="failed", reason="timed out", ended=now())
+            save_pending(p); log_history(p)
+        return
+    if st in ("error", "cancel"):
+        p.update(status="failed", reason=f"Kaggle run {st}", ended=now())
+        save_pending(p); log_history(p)
+        return
+
+    out = BUILD / "out"
+    shutil.rmtree(out, ignore_errors=True)
+    kaggle("kernels", "output", KERNEL, "-p", str(out))
+    gguf = next(iter(glob.glob(str(out / "**" / "topshe_brain.gguf"), recursive=True)), None)
+    evf = next(iter(glob.glob(str(out / "**" / "eval.json"), recursive=True)), None)
+    tpl = next(iter(glob.glob(str(out / "**" / "prompt_template.json"), recursive=True)), None)
+    if not (gguf and evf and tpl):
+        p.update(status="failed", reason="training finished but files are missing", ended=now())
+        save_pending(p); log_history(p)
+        return
+    ev = json.loads(Path(evf).read_text())
+    prev = previous_manifest()
+    reasons = gate(ev, prev)
+    summary = {k: (ev.get(k) or {}).get("exact") for k in ("synthetic", "yours")}
+    if reasons:
+        print("Quality gate FAILED:", reasons)
+        p.update(status="rejected", reasons=reasons, scores=summary, ended=now())
+        save_pending(p); log_history(p)
+        return
+
+    version = (prev or {}).get("version", 0) + 1
+    rel = BUILD / "release"
+    shutil.rmtree(rel, ignore_errors=True)
+    rel.mkdir(parents=True)
+    full_sha = sha256(gguf)
+    parts = []
+    with open(gguf, "rb") as f:
+        i = 0
+        while True:
+            chunk = f.read(PART_BYTES)
+            if not chunk:
+                break
+            name = f"topshe_brain_v{version}.gguf.part{i:02d}"
+            (rel / name).write_bytes(chunk)
+            parts.append({"name": name, "bytes": len(chunk), "sha256": hashlib.sha256(chunk).hexdigest()})
+            i += 1
+    manifest = {
+        "version": version, "created": now(), "sha256": full_sha, "bytes": os.path.getsize(gguf),
+        "parts": parts, "prompt": json.loads(Path(tpl).read_text()),
+        "eval": {k: ({x: v[x] for x in ("n", "valid", "action", "exact")} if isinstance(v, dict) and "exact" in v else v)
+                 for k, v in ev.items() if k in ("synthetic", "yours", "chat_sample", "general_sample", "train_rows",
+                                                  "your_interactions", "base_model", "llama_cpp")},
+    }
+    (rel / "manifest.json").write_text(json.dumps(manifest, indent=1, ensure_ascii=False))
+    notes = (f"Weekly brain v{version}. Test accuracy: {summary['synthetic']:.1%}"
+             + (f", your commands: {summary['yours']:.1%}" if summary.get("yours") is not None else "")
+             + f". Trained on {ev.get('your_interactions', 0)} of your interactions.")
+    run(["gh", "release", "create", f"model-{version}", "-R", REPO, "--title", f"Topshe brain v{version}",
+         "--notes", notes, "--latest=false", *[str(x) for x in sorted(rel.iterdir())]])
+    p.update(status="published", version=version, scores=summary, ended=now())
+    save_pending(p); log_history(p)
+    print("Published", f"model-{version}")
+
+
+if __name__ == "__main__":
+    {"start": start, "collect": collect}[sys.argv[1]]()
