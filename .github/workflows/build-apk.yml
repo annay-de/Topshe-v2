@@ -43,8 +43,22 @@ jobs:
           done
           curl -sL https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2 | tar tjf - | sed 's/^/KWSFILE /'
 
+      - name: Unpack the permanent signing key (from repo Secrets)
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/topshe.jks"
+            echo "TOPSHE_KEYSTORE=$RUNNER_TEMP/topshe.jks" >> "$GITHUB_ENV"
+            echo "Signing with the permanent Topshe key"
+          else
+            echo "::warning::No KEYSTORE_B64 secret - using a temporary key (updates won't install over old builds)"
+          fi
+
       - name: Build APK
         working-directory: android
+        env:
+          TOPSHE_KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
         run: gradle assembleRelease --no-daemon --stacktrace
 
       - name: Name the APK

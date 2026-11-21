@@ -21,11 +21,22 @@ android {
         }
     }
 
+    // Permanent signing key (from GitHub Secrets) so each new build installs over the last one.
+    // Without the secrets, it falls back to a temporary debug key.
+    val ksFile = System.getenv("TOPSHE_KEYSTORE")?.let { file(it) }?.takeIf { it.exists() }
+    signingConfigs {
+        if (ksFile != null) create("topshe") {
+            storeFile = ksFile
+            storePassword = System.getenv("TOPSHE_KEYSTORE_PASS")
+            keyAlias = "topshe"
+            keyPassword = System.getenv("TOPSHE_KEYSTORE_PASS")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Personal sideloaded app: sign with the standard debug key so the APK installs directly
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (ksFile != null) signingConfigs.getByName("topshe") else signingConfigs.getByName("debug")
         }
     }
 
