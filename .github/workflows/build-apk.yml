@@ -3,6 +3,7 @@ name: Build Topshe APK
 on:
   push:
     branches: [main]
+    paths: ["android/**", "branding/**", ".github/workflows/build-apk.yml"]   # only app changes make a new build
   workflow_dispatch:
 
 permissions:
