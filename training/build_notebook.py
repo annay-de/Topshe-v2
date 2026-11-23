@@ -66,8 +66,8 @@ N_DISTILL = 600                # general chat examples (made once, reused every 
 N_STYLE = 1500                 # your past messages used per run
 """)
 
-gen_src = (HERE / "make_dataset_v3.py").read_text().split('if __name__ == "__main__":')[0]
-code("# 3. Training data generator (training/make_dataset_v3.py)\n" + gen_src)
+gen_src = (HERE / "make_dataset_v4.py").read_text().split('if __name__ == "__main__":')[0]
+code("# 3. Training data generator (training/make_dataset_v4.py: English + Bengali/Banglish)\n" + gen_src)
 
 code("""# 4. Inputs from the topshe-data dataset (all optional)
 def find(name):
@@ -89,7 +89,8 @@ code("""# 5. Build the dataset (with automatic re-weighting)
 seed = int(time.time()) % 100000
 synthetic = make_rows(seed=seed)                      # fresh phrasings every week
 eval_synth = [r for r in synthetic if r["kind"] == "command"][:200]
-eval_keys = {r["user"] for r in eval_synth}
+eval_bn = [r for r in synthetic if r["kind"] == "command_bn"][:150]      # Bengali / Banglish test set
+eval_keys = {r["user"] for r in eval_synth + eval_bn}
 train = [r for r in synthetic if r["user"] not in eval_keys]
 
 # Re-weighting 1: action types the current brain got wrong more often get extra examples
@@ -102,6 +103,10 @@ for act, acc in per_action.items():
     if copies:
         print(f"re-weighting: {act} was {acc:.0%} correct -> {copies} extra copies")
 train += extra
+bn_prev = (prev_eval.get("bengali") or {}).get("exact")
+if bn_prev is not None and bn_prev < 0.9:                       # Bengali weaker last week: one extra copy
+    train += [r for r in train if r["kind"] == "command_bn"]
+    print(f"re-weighting: Bengali was {bn_prev:.0%} correct -> 1 extra copy")
 
 # Re-weighting 2: your own commands (corrections 5x, confirmed 3x, ok 2x, recent 1.5x)
 mine = user_rows(interactions, facts)
@@ -118,7 +123,8 @@ train += style
 
 eval_mem_chat, eval_mem_cmd = eval_memory_rows()
 print("synthetic", len(synthetic), "| re-weighted extra", len(extra), "| yours", len(mine),
-      "| style", len(style), "| eval: synth", len(eval_synth), "yours", len(eval_user), "style", len(eval_style))
+      "| style", len(style), "| eval: synth", len(eval_synth), "bengali", len(eval_bn), "yours", len(eval_user),
+      "style", len(eval_style))
 """)
 
 code("""# 6. Load Qwen 3.5 4B (16-bit LoRA, language layers only)
@@ -202,6 +208,20 @@ else:
         for d in distill:
             f.write(json.dumps(d, ensure_ascii=False) + "\\n")
     print("Made", len(distill), "chat examples")
+# Bengali questions: answered in Bengali by the base model, once (added to the cache)
+have = {d["question"] for d in distill}
+todo = [q for q in BN_CHAT_DISTILL if q not in have]
+if todo and not any(r["kind"] == "chat" for r in train):   # still before training: the LoRA is a no-op
+    FastModel.for_inference(model)
+    for q in todo:
+        a = generate(CHAT_SYSTEM, q, max_new=140)
+        if 5 <= len(a) <= 600 and "<think>" not in a and not a.startswith("{"):
+            distill.append({"question": q, "answer": a, "base_model": BASE_MODEL})
+    FastModel.for_training(model)
+    with open(f"{OUT}/chat_distill.jsonl", "w", encoding="utf-8") as f:
+        for d in distill:
+            f.write(json.dumps(d, ensure_ascii=False) + "\\n")
+    print("Bengali chat examples added:", len(todo), "| e.g.", todo[0], "->", distill[-1]["answer"][:100])
 for d in distill:
     sys_prompt = with_facts(CHAT_SYSTEM, random_facts(4) if random.random() < 0.3 else [])
     train.append(row(sys_prompt, d["question"], d["answer"], "chat"))
@@ -276,6 +296,7 @@ def score(rows):
             "per_action": {k: v[0] / v[1] for k, v in per.items()}, "misses": misses[:25]}
 
 ev = {"synthetic": score(eval_synth)}
+ev["bengali"] = score(eval_bn) if eval_bn else None
 ev["yours"] = score(eval_user) if eval_user else None
 ev["style_routing"] = score(eval_style)["action"] if eval_style else None      # your normal talk -> chat
 ev["memory_commands"] = score(eval_mem_cmd)["exact"]
@@ -284,7 +305,8 @@ for r in eval_mem_chat:
     hits += r["assistant"].lower() in generate(r["system"], r["user"], 60).lower()
 ev["memory_chat"] = hits / len(eval_mem_chat)
 samples = {q: generate(with_facts(CHAT_SYSTEM, facts), q, 80) for q in
-           ["who directed pather panchali?", "what is an instrumental variable, simply?", "who are you?"]}
+           ["who directed pather panchali?", "what is an instrumental variable, simply?", "who are you?",
+            "পথের পাঁচালী কে বানিয়েছিল?"]}
 ev["chat_samples"] = samples
 ev["chat_ok"] = all(5 <= len(a) <= 600 and not a.startswith("{") for a in samples.values())
 ev.update({"train_rows": len(train), "your_interactions": len(interactions), "base_model": BASE_MODEL,

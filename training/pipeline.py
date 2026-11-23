@@ -39,6 +39,7 @@ MIN_VALID = 0.98            # share of replies that are valid JSON
 MIN_EXACT = 0.90            # share of held-back commands fully right
 MAX_DROP = 0.02             # allowed drop vs the current brain (noise margin)
 MIN_SMOKE = 0.85            # share of phone-file test commands right
+MIN_BENGALI = 0.85          # share of held-back Bengali / Banglish commands fully right
 
 
 def now():
@@ -187,6 +188,9 @@ def gate(ev, prev):
         reasons.append("chat answers looked broken")
     if ev.get("style_routing") is not None and ev["style_routing"] < 0.85:
         reasons.append(f"mistook your normal talk for commands ({ev['style_routing']:.2f})")
+    bn = ev.get("bengali") or {}
+    if bn and bn.get("exact", 0) < MIN_BENGALI:
+        reasons.append(f"Bengali command accuracy {bn.get('exact', 0):.2f} < {MIN_BENGALI}")
     if ev.get("memory_chat", 0) < 0.5:
         reasons.append(f"didn't use what it was told to remember ({ev.get('memory_chat', 0):.2f})")
     if prev:
@@ -201,7 +205,7 @@ def gate(ev, prev):
     return reasons
 
 
-KEEP = ("synthetic", "yours", "style_routing", "memory_commands", "memory_chat", "chat_samples", "chat_ok",
+KEEP = ("synthetic", "bengali", "yours", "style_routing", "memory_commands", "memory_chat", "chat_samples", "chat_ok",
         "gguf_smoke", "weight_check", "train_rows", "your_interactions", "base_model", "llama_cpp", "quant",
         "loss_last")
 
@@ -285,7 +289,7 @@ def finish(p):
     prev = previous_manifest()
 
     def scores():
-        sm = {k: (ev.get(k) or {}).get("exact") for k in ("synthetic", "yours")}
+        sm = {k: (ev.get(k) or {}).get("exact") for k in ("synthetic", "bengali", "yours")}
         sm.update({k: ev.get(k) for k in ("style_routing", "memory_chat", "gguf_smoke", "weight_check")})
         return sm
 
