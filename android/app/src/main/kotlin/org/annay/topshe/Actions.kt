@@ -52,7 +52,16 @@ class Actions(private val ctx: Context, private val speaker: Speaker,
                 speaker.say(if (n > 0) "Done, I've forgotten that." else "I didn't have anything like that saved.")
             }
             "stop" -> { speaker.say("Okay, going quiet."); return Result(false, "ok") }
-            "chat" -> { outcome = "chat"; speaker.say(Brain.chat(a.optString("query").ifBlank { heard }, memory.facts())) }
+            "chat" -> {
+                outcome = "chat"
+                val q = a.optString("query").ifBlank { heard }
+                val quick = QuickRules.reply(q)
+                val answer = quick ?: Brain.chat(q, memory.facts()).also {
+                    if (Brain.lastStats.isNotBlank()) ActivityLog.add(ctx, Brain.lastStats)
+                }
+                if (quick == null && Brain.wasStopped) return Result(true, "cancelled")
+                speaker.say(answer)
+            }
             else -> { outcome = "failed"; speaker.say("Sorry, I didn't understand that.") }
         }
         return Result(true, outcome)

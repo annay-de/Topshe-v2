@@ -40,6 +40,8 @@ class HomeScreen(private val act: Activity, private val k: Kit,
     private val thinking = k.text("Topshe is thinking...", 13f, Look.MUTED).apply { visibility = View.GONE; setPadding(k.dp(4), k.dp(2), 0, k.dp(4)) }
     private var stamp = -1L
     private var busy = false
+    private var busySince = 0L
+    private var warmed = false
     private var pending: CompletableDeferred<String?>? = null
     private var speaker: Speaker? = null
     private var engine: ChatEngine? = null
@@ -72,6 +74,9 @@ class HomeScreen(private val act: Activity, private val k: Kit,
 
         col.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = k.dp(10) })
         col.addView(thinking)
+        thinking.setOnClickListener {                     // tap to stop a slow answer
+            if (busy) { Brain.stopNow(); thinking.text = "Stopping..." }
+        }
         col.addView(options)
 
         // Shortcuts
@@ -126,6 +131,18 @@ class HomeScreen(private val act: Activity, private val k: Kit,
     fun tick() {
         val s = ChatLog.stamp(act)
         if (s != stamp) { stamp = s; render() }
+        if (busy && pending == null && thinking.text != "Stopping...") {
+            val secs = (System.currentTimeMillis() - busySince) / 1000
+            if (secs >= 2) thinking.text = "Topshe is thinking... ${secs}s  ·  tap to stop"
+        }
+    }
+
+    /** Opening the chat gets the brain ready in the background (quick commands never wait for it). */
+    fun warmUp() {
+        if (warmed || busy || !Store.brain(act).exists()) return
+        warmed = true
+        val eng = engine()
+        scope.launch(Dispatchers.Default) { runCatching { eng.warmUp() } }
     }
 
     private fun render() {
@@ -151,6 +168,7 @@ class HomeScreen(private val act: Activity, private val k: Kit,
         pending?.let { if (it.isActive) { answer(t, t); return } }
         if (busy) { thinking.text = "One moment, still on the last one..."; return }
         busy = true
+        busySince = System.currentTimeMillis()
         ChatLog.add(act, true, t, "typed"); tick()
         thinking.text = "Topshe is thinking..."; thinking.visibility = View.VISIBLE
         val eng = engine()                       // created on the main thread (it starts text-to-speech)

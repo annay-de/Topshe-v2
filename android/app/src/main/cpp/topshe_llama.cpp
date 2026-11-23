@@ -6,6 +6,9 @@
 // recurrent) layers too, because we save/restore the whole sequence state, not just the KV cache.
 #include <jni.h>
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cstdio>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -31,6 +34,14 @@ struct Engine {
 };
 
 std::mutex g_mu;   // one generation at a time (phone CPU)
+std::atomic<bool> g_abort{false};   // set by the kill switch / Stop button: ends the current answer now
+std::string g_stats;                // timings of the last answer (for the activity log)
+
+bool abort_cb(void *) { return g_abort.load(); }   // checked by llama.cpp during every computation
+
+double now_ms() {
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 const int N_CTX = 4096;
 const int N_BATCH = 512;
 const size_t MAX_SLOTS = 3;
@@ -52,7 +63,7 @@ std::vector<llama_token> tokenize(const llama_vocab *vocab, const std::string &t
 bool decode_all(llama_context *ctx, std::vector<llama_token> &toks) {
     for (size_t i = 0; i < toks.size(); i += N_BATCH) {
         int n = (int) std::min<size_t>(N_BATCH, toks.size() - i);
-        if (llama_decode(ctx, llama_batch_get_one(toks.data() + i, n)) != 0) return false;
+        if (g_abort.load() || llama_decode(ctx, llama_batch_get_one(toks.data() + i, n)) != 0) return false;
     }
     return true;
 }
@@ -67,6 +78,7 @@ bool ensure_ctx(Engine *e, int threads) {
         cp.n_threads = threads;
         cp.n_threads_batch = threads;
         e->ctx = llama_init_from_model(e->model, cp);
+        if (e->ctx) llama_set_abort_callback(e->ctx, abort_cb, nullptr);
         e->threads = threads;
         e->slots.clear();
     } else if (threads != e->threads) {
@@ -108,7 +120,11 @@ extern "C" JNIEXPORT jbyteArray JNICALL
 Java_org_annay_topshe_NativeLlama_generate(JNIEnv *env, jobject, jlong handle, jstring jprefix, jstring jsuffix,
                                            jint maxTokens, jfloat temp, jint threads) {
     std::lock_guard<std::mutex> lk(g_mu);
+    g_abort = false;
     std::string out;
+    double t0 = now_ms(), t_prefix = 0, t_suffix = 0, t_gen = 0;
+    int n_prefix = 0, n_suffix = 0, n_gen = 0;
+    bool cached = false;
     auto *e = (Engine *) handle;
     if (e && ensure_ctx(e, threads)) {
         const llama_vocab *vocab = llama_model_get_vocab(e->model);
@@ -123,6 +139,7 @@ Java_org_annay_topshe_NativeLlama_generate(JNIEnv *env, jobject, jlong handle, j
             if (s.prefix == prefix) {
                 llama_memory_clear(mem, true);
                 ready = llama_state_seq_set_data(e->ctx, s.state.data(), s.state.size(), 0) > 0;
+                cached = ready;
                 s.last_used = ++e->clock;
                 break;
             }
@@ -131,7 +148,11 @@ Java_org_annay_topshe_NativeLlama_generate(JNIEnv *env, jobject, jlong handle, j
         if (!ready) {
             llama_memory_clear(mem, true);
             auto prefix_toks = tokenize(vocab, prefix);
-            if ((int) (prefix_toks.size() + suffix_toks.size()) + maxTokens < N_CTX && decode_all(e->ctx, prefix_toks)) {
+            n_prefix = (int) prefix_toks.size();
+            double tp = now_ms();
+            bool ok = (int) (prefix_toks.size() + suffix_toks.size()) + maxTokens < N_CTX && decode_all(e->ctx, prefix_toks);
+            t_prefix = now_ms() - tp;
+            if (ok) {
                 Slot s;
                 s.prefix = prefix;
                 s.state.resize(llama_state_seq_get_size(e->ctx, 0));
@@ -150,8 +171,13 @@ Java_org_annay_topshe_NativeLlama_generate(JNIEnv *env, jobject, jlong handle, j
             }
         }
         // 3) Your words, then generate the reply
-        if (ready && llama_memory_seq_pos_max(mem, 0) + (int) suffix_toks.size() + maxTokens < N_CTX &&
-            decode_all(e->ctx, suffix_toks)) {
+        n_suffix = (int) suffix_toks.size();
+        double ts = now_ms();
+        bool suffix_ok = ready && llama_memory_seq_pos_max(mem, 0) + (int) suffix_toks.size() + maxTokens < N_CTX &&
+            decode_all(e->ctx, suffix_toks);
+        t_suffix = now_ms() - ts;
+        if (suffix_ok) {
+            double tg = now_ms();
             llama_sampler *smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
             if (temp <= 0.0f) {
                 llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
@@ -162,18 +188,34 @@ Java_org_annay_topshe_NativeLlama_generate(JNIEnv *env, jobject, jlong handle, j
                 llama_sampler_chain_add(smpl, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
             }
             llama_token tok = 0;
-            for (int i = 0; i < maxTokens; i++) {
+            for (int i = 0; i < maxTokens && !g_abort.load(); i++) {
                 tok = llama_sampler_sample(smpl, e->ctx, -1);
                 if (llama_vocab_is_eog(vocab, tok)) break;
                 char buf[256];
                 int len = llama_token_to_piece(vocab, tok, buf, sizeof(buf), 0, false);
                 if (len > 0) out.append(buf, len);
+                n_gen++;
                 if (llama_decode(e->ctx, llama_batch_get_one(&tok, 1)) != 0) break;
             }
             llama_sampler_free(smpl);
+            t_gen = now_ms() - tg;
         }
+        if (g_abort.load()) { llama_memory_clear(mem, true); out.clear(); }   // stopped: drop the half answer
     }
+    char buf[256];
+    snprintf(buf, sizeof(buf), "%s%s threads %d | instructions %d tok %.1fs%s | your words %d tok %.1fs | reply %d tok %.1fs (%.1f tok/s) | total %.1fs",
+             g_abort.load() ? "STOPPED " : "", "brain", e ? e->threads : 0, n_prefix, t_prefix / 1000, cached ? " (cached)" : "",
+             n_suffix, t_suffix / 1000, n_gen, t_gen / 1000, t_gen > 0 ? n_gen * 1000.0 / t_gen : 0.0, (now_ms() - t0) / 1000);
+    g_stats = buf;
+    LOGI("%s", buf);
     jbyteArray arr = env->NewByteArray((jsize) out.size());
     env->SetByteArrayRegion(arr, 0, (jsize) out.size(), (const jbyte *) out.data());
     return arr;
 }
+
+// Kill switch / Stop button: ends the current answer within a moment (no lock: callable any time).
+extern "C" JNIEXPORT void JNICALL
+Java_org_annay_topshe_NativeLlama_abort(JNIEnv *, jobject) { g_abort = true; }
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_org_annay_topshe_NativeLlama_stats(JNIEnv *env, jobject) { return env->NewStringUTF(g_stats.c_str()); }

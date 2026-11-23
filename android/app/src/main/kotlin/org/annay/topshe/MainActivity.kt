@@ -187,7 +187,7 @@ class MainActivity : Activity() {
             brainStatus.text = prefs.brainDl
         })
         c5.addView(k.button("Speed test (picks the fastest setting)") {
-            background("Testing speed... (takes about a minute)") { Brain.speedTest(this, Memory(this).facts()) }
+            background("Testing speed... (up to 3 minutes)") { Brain.speedTest(this, Memory(this).facts()) }
         })
         c5.addView(k.text("Before the first weekly brain arrives, you can use the older v2 model:", 13f).apply { setPadding(0, k.dp(12), 0, 0) })
         c5.addView(k.button("Pick older model (topshe_v2.gguf)") { pick(PICK_GGUF) })
@@ -274,13 +274,14 @@ class MainActivity : Activity() {
         for (j in 0 until pages.childCount) pages.getChildAt(j).visibility = if (j == i) View.VISIBLE else View.GONE
         kit.selectTab(tabs, i)
         if (i == 1) memoryScreen?.render()
+        if (i == 0) home?.warmUp()
         if (i != 0) (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
             .hideSoftInputFromWindow(pages.windowToken, 0)
     }
 
     override fun onDestroy() {
         home?.destroy()
-        if (ListenerService.state == ListenerService.State.OFF) Brain.unload()   // chat loaded it; free the memory
+        if (ListenerService.state == ListenerService.State.OFF) Brain.unloadInBackground()   // chat loaded it; free the memory (never on the screen thread)
         super.onDestroy()
     }
 

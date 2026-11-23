@@ -9,6 +9,8 @@ object NativeLlama {
     external fun load(path: String): Long
     external fun unload(handle: Long)
     external fun generate(handle: Long, prefix: String, suffix: String, maxTokens: Int, temp: Float, threads: Int): ByteArray
+    external fun abort()
+    external fun stats(): String
 }
 
 /**
@@ -45,7 +47,26 @@ object Brain {
     @Volatile var dualHearing = false
         private set
     private var template = CHATML
-    @Volatile var threads = 4
+    @Volatile var threads = 2
+    /** Timings of the last answer (prompt, your words, reply speed) for the activity log. */
+    @Volatile var lastStats = ""
+
+    /** The last answer was cut short by Stop / the kill switch. */
+    @Volatile var wasStopped = false
+        private set
+
+    /** Ends the current answer right away (kill switch, Stop button). Never blocks. */
+    fun stopNow() {
+        if (handle == 0L) return
+        wasStopped = true
+        runCatching { NativeLlama.abort() }
+    }
+
+    /** Kill/pause: stop the answer and free the memory off the screen thread (never freezes the phone). */
+    fun unloadInBackground() {
+        stopNow()
+        Thread { unload() }.start()
+    }
 
     val loaded get() = handle != 0L
 
@@ -90,12 +111,21 @@ object Brain {
     private fun run(system: String, user: String, maxTokens: Int, temp: Float): String {
         val h = handle
         if (h == 0L) return ""
+        wasStopped = false
         val full = template.replace("{SYSTEM}", system)
         val cut = full.indexOf("{USER}")
         val prefix = full.substring(0, cut)
         val suffix = user + full.substring(cut + "{USER}".length)
-        return String(NativeLlama.generate(h, prefix, suffix, maxTokens, temp, threads), Charsets.UTF_8)
+        val out = String(NativeLlama.generate(h, prefix, suffix, maxTokens, temp, threads), Charsets.UTF_8)
             .replace(Regex("(?s)<think>.*?</think>"), "").trim()
+        lastStats = runCatching { NativeLlama.stats() }.getOrDefault("")
+        android.util.Log.i("Topshe", lastStats)
+        return out
+    }
+
+    /** Processes the fixed instructions once in advance, so the first real request is quicker. */
+    fun warmUp(facts: List<String>) {
+        run(withFacts(if (legacy) LEGACY_CMD_SYSTEM else CMD_SYSTEM, facts), "hi", 1, 0f)
     }
 
     /** Your words -> one action (JSON), or null if the reply wasn't readable. */
@@ -103,7 +133,7 @@ object Brain {
         parseJson(run(withFacts(if (legacy) LEGACY_CMD_SYSTEM else CMD_SYSTEM, facts), text, 96, 0f))
 
     fun chat(question: String, facts: List<String>): String =
-        run(withFacts(CHAT_SYSTEM, facts), question, 200, 0.6f)
+        run(withFacts(CHAT_SYSTEM, facts), question, 120, 0.6f)
             .ifBlank { "Sorry, I don't have an answer for that." }
 
     /** Lenient: finds the first balanced {...} in the output. */
@@ -121,26 +151,27 @@ object Brain {
         return null
     }
 
-    /** Times a few commands at different thread counts; keeps the fastest. Returns a readable report. */
+    /** Times one short command at 2, 3 and 4 threads (after warming up); keeps the fastest. */
     fun speedTest(ctx: Context, facts: List<String>): String {
+        val t0 = System.currentTimeMillis()
         if (!load(ctx)) return "No brain on the phone yet."
-        val samples = listOf("wake me up at 6:45 tomorrow", "remind me to call maa in 20 minutes", "open spotify")
-        command(samples[0], facts)   // warm-up (also caches the fixed instructions)
-        val results = mutableListOf<Pair<Int, Long>>()
-        for (t in listOf(2, 4, 6)) {
+        val loadS = (System.currentTimeMillis() - t0) / 1000.0
+        warmUp(facts)
+        val warm = lastStats
+        val results = mutableListOf<Triple<Int, Long, String>>()
+        for (t in listOf(2, 3, 4)) {
             threads = t
-            val t0 = System.currentTimeMillis()
-            samples.forEach { command(it, facts) }
-            results += t to (System.currentTimeMillis() - t0) / samples.size
+            val s = System.currentTimeMillis()
+            command("open spotify", facts)
+            val ms = System.currentTimeMillis() - s
+            results += Triple(t, ms, lastStats)
+            if (ms > 90_000) break                     // hopeless: don't keep the phone busy
         }
         val best = results.minBy { it.second }
         threads = best.first
         Prefs(ctx).threads = best.first
-        val t0 = System.currentTimeMillis()
-        val answer = chat("In one sentence, what is inflation?", facts)
-        val chatMs = System.currentTimeMillis() - t0
-        return "Brain $loadedName\n" +
-            results.joinToString("\n") { "${it.first} threads: %.1f s per command".format(it.second / 1000.0) } +
-            "\nUsing ${best.first} threads.\nChat answer took %.1f s: \"%s\"".format(chatMs / 1000.0, answer.take(120))
+        return "Brain $loadedName (load %.1fs)\nWarm-up: %s\n".format(loadS, warm) +
+            results.joinToString("\n") { (t, ms, st) -> "$t threads: %.1fs - $st".format(ms / 1000.0) } +
+            "\nUsing ${best.first} threads."
     }
 }

@@ -27,8 +27,9 @@ class Prefs(ctx: Context) {
 
     /** CPU threads for the brain (set by the speed test). */
     var threads: Int
-        get() = sp.getInt("threads", 4)
-        set(v) = sp.edit().putInt("threads", v).apply()
+        // Dimensity 6400: 2 fast cores; more threads mix in slow ones. Older builds saved 4: start again at 2.
+        get() = if (sp.getInt("threadsVer", 0) < 2) 2 else sp.getInt("threads", 2)
+        set(v) = sp.edit().putInt("threads", v).putInt("threadsVer", 2).apply()
 
     /** GitHub token (fine-grained, Contents read/write on the Topshe-v2 repo): uploads data, downloads brains. */
     var githubToken: String

@@ -54,17 +54,30 @@ class ChatEngine(private val ctx: Context, private val speaker: Speaker) {
 
     /** Returns false if the request was "stop listening". */
     suspend fun handle(text: String, asker: Actions.Asker): Boolean {
-        if (!Brain.load(ctx)) {
-            speaker.say("I don't have a brain on the phone yet. Finish setup in Settings, step 5.")
-            return true
-        }
         // A typed request is exact: English as one line; Bengali as the Bengali "hearing"
-        val input = if (Brain.dualHearing && Hearing.hasBengali(text)) Hearing("", text).forBrain(true) else text
-        val learned = memory.correctionFor(input)
-        val cmd = learned ?: playRule(text) ?: Brain.command(input, memory.facts())
+        val bn = Hearing.hasBengali(text)
+        val input = if (Brain.dualHearing && bn) Hearing("", text).forBrain(true) else text
+        val learned = memory.correctionFor(input) ?: memory.correctionFor(text)
+
+        // Everyday commands and small talk: instant, no brain needed
+        val quick = if (learned == null) QuickRules.match(text) else null
+        if (learned == null && quick == null) {
+            QuickRules.reply(text)?.let {
+                speaker.say(it)
+                memory.log(input, JSONObject().put("action", "chat").put("query", text), "chat")
+                return true
+            }
+        }
+        val cmd = learned ?: quick ?: run {
+            if (!Brain.load(ctx)) {
+                speaker.say("I don't have a brain on the phone yet. Finish setup in Settings, step 5.")
+                return true
+            }
+            Brain.command(input, memory.facts()).also { if (Brain.lastStats.isNotBlank()) ActivityLog.add(ctx, Brain.lastStats) }
+        }
         if (cmd == null) {
-            speaker.say("Sorry, I didn't understand that.")
-            memory.log(input, null, "failed")
+            speaker.say(if (Brain.wasStopped) "Stopped." else "Sorry, I didn't understand that.")
+            if (!Brain.wasStopped) memory.log(input, null, "failed")
             return true
         }
         val r = actions.run(cmd, text, asker)
@@ -72,15 +85,8 @@ class ChatEngine(private val ctx: Context, private val speaker: Speaker) {
         return r.keepListening
     }
 
-    /** "play X" / "play X on youtube" straight to music (same rule as voice). */
-    private fun playRule(t: String): JSONObject? {
-        val s = t.lowercase().trim().removeSuffix(".")
-        return when {
-            s.startsWith("play ") && s.endsWith(" on youtube") -> JSONObject().put("action", "media").put("op", "play")
-                .put("query", s.removePrefix("play ").removeSuffix(" on youtube")).put("source", "youtube")
-            s.startsWith("play ") && s !in setOf("play music", "play some music", "play next song") -> JSONObject().put("action", "media")
-                .put("op", "play").put("query", s.removePrefix("play ").removeSuffix(" on spotify")).put("source", "spotify")
-            else -> null
-        }
+    /** Processes the brain's fixed instructions in advance, so the first typed request is quicker. */
+    fun warmUp() {
+        if (Brain.load(ctx)) Brain.warmUp(memory.facts())
     }
 }

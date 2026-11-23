@@ -17,6 +17,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -115,6 +117,8 @@ class ListenerService : Service() {
                 e.open()
                 setState(State.LISTENING, "Listening for \"Topshe\"")
                 ActivityLog.add(this@ListenerService, "Listening (brain ${Brain.loadedName}, ${memory.facts().size} facts)")
+                // Get the brain's fixed instructions ready while you're not talking yet
+                scope.launch { runCatching { Brain.warmUp(memory.facts()) }; logSpeed() }
                 while (isActive && e.waitForWake { isActive }) {
                     if (!handleWake(e)) { pauseFromInside(); break }
                     e.flush()
@@ -178,7 +182,8 @@ class ListenerService : Service() {
             val fixed = if (said.isBlank()) asker.ask("Okay, what did you mean?") ?: ""
                         else if (dual) Hearing(restEn ?: h.en, restBn ?: h.bn).forBrain(true) else said
             if (fixed.isBlank()) return true
-            val newCmd = musicRuleAsAction(fixed) ?: Brain.command(fixed, memory.facts())
+            val newCmd = (if (said.isNotBlank()) QuickRules.match(restEn.orEmpty()) ?: QuickRules.match(restBn.orEmpty()) else QuickRules.match(fixed))
+                ?: Brain.command(fixed, memory.facts()).also { logSpeed() }
                 ?: run { speaker.say("Sorry, I still didn't get it."); return true }
             memory.addCorrection(prev.heard, newCmd)
             memory.log(prev.heard, prev.action, "corrected", newCmd)
@@ -191,15 +196,19 @@ class ListenerService : Service() {
         // 2) Something you corrected before? Do what you meant last time.
         val learned = memory.correctionFor(heard)?.also { ActivityLog.add(this, "Using your earlier correction") }
 
-        // 3) Music / media: simple rules, instant
-        //    (English line: "play ..." patterns; Bengali requests go to the brain)
-        if (learned == null && music.handle(h.en)) {
-            musicRuleAsAction(h.en)?.let { memory.log(heard, it, "ok"); last = Last(heard, it, System.currentTimeMillis()) }
-            return true
+        // 3) Everyday commands (music, timers, clear alarms, apps, calls, Bengali basics): instant, no brain
+        val quick = if (learned != null) null
+                    else (if (dual) QuickRules.match(h.bn) else null) ?: QuickRules.match(h.en)
+        if (learned == null && quick == null) {
+            QuickRules.reply(h.en)?.let { say ->
+                speaker.say(say)
+                memory.log(heard, JSONObject().put("action", "chat").put("query", h.en), "chat")
+                return true
+            }
         }
 
-        // 4) The brain
-        val cmd = learned ?: Brain.command(heard, memory.facts())
+        // 4) The brain (only when nothing above matched)
+        val cmd = learned ?: quick ?: Brain.command(heard, memory.facts()).also { logSpeed() }
         if (cmd == null) { speaker.say("Sorry, I got confused. Try again?"); memory.log(heard, null, "failed"); return true }
 
         val r = actions.run(cmd, h.en.ifBlank { h.bn }, asker)
@@ -208,22 +217,16 @@ class ListenerService : Service() {
         return r.keepListening
     }
 
-    /** The music rules' meaning, as an action (for logging and corrections). */
-    private fun musicRuleAsAction(t: String): JSONObject? {
-        val s = t.lowercase().trim()
-        return when {
-            s.startsWith("play ") && s.endsWith(" on youtube") -> JSONObject().put("action", "media").put("op", "play")
-                .put("query", s.removePrefix("play ").removeSuffix(" on youtube")).put("source", "youtube")
-            s.startsWith("play ") && s !in setOf("play music", "play some music", "play next song") -> JSONObject().put("action", "media")
-                .put("op", "play").put("query", s.removePrefix("play ").removeSuffix(" on spotify")).put("source", "spotify")
-            else -> null
-        }
+    /** The brain's timings, so slow answers show where the time went (Settings > Activity). */
+    private fun logSpeed() {
+        if (Brain.lastStats.isNotBlank()) ActivityLog.add(this, Brain.lastStats)
     }
 
     /** Brain swapped by Sync: reload it (keeps listening if it was). */
     private fun reload() {
         val wasOn = loop?.isActive == true
         val job = loop
+        Brain.stopNow()
         scope.launch {
             job?.cancelAndJoin()
             Brain.unload()
@@ -241,6 +244,7 @@ class ListenerService : Service() {
     private fun pause() {
         if (state == State.OFF) { stopSelf(); return }
         val job = loop
+        Brain.stopNow()                        // don't wait for a half-finished answer
         scope.launch {
             job?.cancelAndJoin()
             pauseFromInside()
@@ -249,9 +253,9 @@ class ListenerService : Service() {
 
     /** Kill switch: everything off, service gone. */
     private fun kill() {
+        val job = loop
         loop?.cancel()
-        ear?.release(); ear = null
-        Brain.unload()
+        shutDownInBackground(job)
         state = State.OFF
         runCatching { TileService.requestListeningState(this, ComponentName(this, TopsheTile::class.java)) }
         ActivityLog.add(this, "Killed - everything off")
@@ -260,10 +264,22 @@ class ListenerService : Service() {
         stopSelf()
     }
 
+    /** Stops the brain at once, then frees the mic models and the brain off the screen thread
+     *  (after the listening loop has really stopped), so the kill switch never freezes the phone. */
+    private fun shutDownInBackground(job: Job?) {
+        Brain.stopNow()
+        val e = ear
+        ear = null
+        Thread {
+            runBlocking { withTimeoutOrNull(5_000) { job?.cancelAndJoin() } }
+            runCatching { e?.release() }
+            Brain.unload()
+        }.start()
+    }
+
     override fun onDestroy() {
+        shutDownInBackground(loop)
         scope.cancel()
-        ear?.release(); ear = null
-        Brain.unload()
         speaker.shutdown()
         state = State.OFF
         super.onDestroy()
