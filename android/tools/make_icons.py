@@ -1,5 +1,6 @@
 """
-Turns one picture (branding/icon.png or .jpg) into every app-icon file Android needs.
+Turns one picture (branding/icon.png or .jpg) into every app-icon file Android needs, plus the
+white status-bar icon (from branding/notification.png if you add one, otherwise from the icon).
 Runs in the GitHub build before Gradle, so changing the picture in GitHub changes the app icon
 in the next build. Optional settings in branding/icon.json:
   {"background": "#F3E7CF",   # colour around the picture (default: taken from the picture's edges)
@@ -14,6 +15,30 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageOps
 
 DENSITIES = {"mdpi": 1, "hdpi": 1.5, "xhdpi": 2, "xxhdpi": 3, "xxxhdpi": 4}
+
+
+def notification_mask(img, bg):
+    """White-on-transparent silhouette for the status bar (Android only uses the shape).
+    Transparent pictures: their own shape. Others: everything darker than the background (ink)."""
+    from PIL import ImageFilter
+    if img.getextrema()[3][0] < 250:                       # has real transparency
+        a = img.getchannel("A")
+    else:
+        g = img.convert("L")
+        bgl = round(0.299 * bg[0] + 0.587 * bg[1] + 0.114 * bg[2])
+        lo = min(g.getextrema()[0], bgl)
+        cut = (lo + bgl) / 2                                # halfway between ink and paper
+        a = g.point(lambda v: 255 if v < cut - 12 else (0 if v > cut + 12 else int((cut + 12 - v) * 255 / 24)))
+    # thicken thin hatching a little so it reads as solid shapes at 24 px
+    a = a.filter(ImageFilter.MaxFilter(max(3, (min(a.size) // 160) | 1)))
+    box = a.getbbox()
+    if not box:
+        return None
+    a = a.crop(box)
+    s = int(max(a.size) * 1.08)                             # small margin, centred square
+    sq = Image.new("L", (s, s), 0)
+    sq.paste(a, ((s - a.size[0]) // 2, (s - a.size[1]) // 2))
+    return sq
 
 
 def load(branding):
@@ -76,6 +101,25 @@ def main(branding, res):
         round_icon = Image.new("RGBA", (m, m), (0, 0, 0, 0))
         round_icon.paste(legacy, (0, 0), mask.resize((m, m), Image.LANCZOS))
         round_icon.save(folder / "ic_launcher_round.png")
+
+    # Notification / quick-settings icon: branding/notification.png if given, else made from the icon
+    npic = None
+    for name in ("notification.png", "notification.webp"):
+        if (branding / name).exists():
+            npic = ImageOps.exif_transpose(Image.open(branding / name)).convert("RGBA")
+    mask = notification_mask(npic if npic is not None else img, bg if npic is None else edge_colour(npic))
+    if mask is None:                                        # nothing usable: a plain dot, so the build still works
+        mask = Image.new("L", (96, 96), 0)
+        ImageDraw.Draw(mask).ellipse((12, 12, 84, 84), fill=255)
+    if mask is not None:
+        for d, k in DENSITIES.items():
+            folder = res / f"drawable-{d}"
+            folder.mkdir(parents=True, exist_ok=True)
+            n = round(24 * k)
+            m = mask.resize((n, n), Image.LANCZOS)
+            white = Image.new("RGBA", (n, n), (255, 255, 255, 0))
+            white.putalpha(m)
+            white.save(folder / "ic_stat_topshe.png")
 
     (res / "values").mkdir(parents=True, exist_ok=True)
     (res / "values" / "ic_launcher_background.xml").write_text(

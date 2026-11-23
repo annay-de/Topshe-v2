@@ -12,3 +12,4 @@ __pycache__/
 # made by the build from branding/icon.png
 android/app/src/main/res/mipmap-*/
 android/app/src/main/res/values/ic_launcher_background.xml
+android/app/src/main/res/drawable-*/ic_stat_topshe.png

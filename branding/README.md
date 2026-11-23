@@ -16,3 +16,7 @@ The app icon is made from **`icon.png`** in this folder, every time the app is b
 - `zoom`: above 1 makes the picture bigger (round icons cut more of its edges), below 1 smaller
 
 `owl_source.svg` is the source drawing of the default owl.
+
+## Notification icon
+
+The small white icon in the status bar, notifications and the quick-settings tile is made from the same picture: dark lines and shapes become white, and the light background becomes see-through. To use a different picture for it, add **`notification.png`** here. A white or black drawing on a plain or transparent background works best.
