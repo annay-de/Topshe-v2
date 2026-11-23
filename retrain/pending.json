@@ -1,7 +1,19 @@
 {
- "status": "training",
+ "status": "published",
  "started": "2026-11-23T15:19:23+00:00",
  "started_ts": 1795447163.5053487,
  "kernel": "annayde/topshe-trainer",
- "interactions": 0
+ "interactions": 0,
+ "version": 2,
+ "scores": {
+  "synthetic": 1.0,
+  "bengali": 0.9933333333333333,
+  "heard": 0.8833922261484098,
+  "yours": null,
+  "style_routing": 0.99,
+  "memory_chat": 1.0,
+  "gguf_smoke": 1.0,
+  "weight_check": true
+ },
+ "ended": "2026-11-23T19:01:06+00:00"
 }
