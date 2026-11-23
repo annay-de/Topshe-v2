@@ -1,0 +1,39 @@
+name: Compare speech models (Bengali)
+
+# Makes Bengali / Banglish / English test commands with Indian voices and runs each
+# candidate offline speech-to-text model on them (see training/eval_asr_bn.py).
+on: workflow_dispatch
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: |
+          pip install -q "sherpa-onnx==2.0.2" || pip install -q sherpa-onnx
+          pip install -q edge-tts soundfile numpy huggingface_hub
+          python -c "import sherpa_onnx; print('sherpa-onnx', sherpa_onnx.__version__)"
+          ffmpeg -version | head -1
+      - name: Download the models
+        run: |
+          mkdir -p asr_eval && cd asr_eval
+          for m in sherpa-onnx-whisper-base sherpa-onnx-streaming-zipformer-bn-vosk-2026-02-09; do
+            curl -sSfL "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$m.tar.bz2" | tar xjf -
+          done
+          python -c "from huggingface_hub import snapshot_download as s; s('udgamlabs/Shruti-ONNX', allow_patterns=['bn/sherpa-onnx/*'], local_dir='shruti')"
+          ls -la shruti/bn/sherpa-onnx sherpa-onnx-streaming-zipformer-bn-vosk-2026-02-09 | head -30
+          du -sh shruti/bn/sherpa-onnx sherpa-onnx-streaming-zipformer-bn-vosk-2026-02-09 sherpa-onnx-whisper-base
+      - name: Compare
+        run: python training/eval_asr_bn.py asr_eval
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: asr-results
+          path: |
+            asr_eval/asr_results.json
+            asr_eval/clips/*.wav
