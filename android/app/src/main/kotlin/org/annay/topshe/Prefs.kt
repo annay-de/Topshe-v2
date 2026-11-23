@@ -44,6 +44,11 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("brainVersion", 0)
         set(v) = sp.edit().putInt("brainVersion", v).apply()
 
+    /** Chat screen: speak Topshe's replies out loud too (off = text only). */
+    var speakTyped: Boolean
+        get() = sp.getBoolean("speakTyped", false)
+        set(v) = sp.edit().putBoolean("speakTyped", v).apply()
+
     /** Latest status of the brain / voice-model downloads (written by DownloadWorker, shown in the app). */
     var brainDl: String
         get() = sp.getString("brainDl", "") ?: ""

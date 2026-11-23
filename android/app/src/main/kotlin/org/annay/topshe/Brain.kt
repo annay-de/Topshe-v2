@@ -84,7 +84,9 @@ object Brain {
         if (facts.isEmpty() || legacy) system
         else system + "\n\n" + FACTS_HEADER + "\n" + facts.joinToString("\n") { "- $it" }
 
-    /** Splits the template at {USER}: the part before is cached, only the rest is new each time. */
+    /** Splits the template at {USER}: the part before is cached, only the rest is new each time.
+     *  Synchronized with load/unload: the chat screen and the listener can't free it mid-answer. */
+    @Synchronized
     private fun run(system: String, user: String, maxTokens: Int, temp: Float): String {
         val h = handle
         if (h == 0L) return ""

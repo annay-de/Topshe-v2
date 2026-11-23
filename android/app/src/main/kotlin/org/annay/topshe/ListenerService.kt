@@ -77,6 +77,7 @@ class ListenerService : Service() {
         memory = Memory(this)
         music = Music(this, speaker)
         actions = Actions(this, speaker, memory, music)
+        speaker.echo = { ChatLog.add(this, false, it, "voice") }      // replies show in the chat screen
         Sync.schedule(this)
     }
 
@@ -146,6 +147,7 @@ class ListenerService : Service() {
         ActivityLog.add(this, "Heard (voice %.2f): \"%s\"".format(score, h.shown()))
         if (if (dual) h.isBlank() else h.en.isBlank()) { speaker.say("Sorry, I didn't catch that."); return true }
         setState(State.BUSY, "Working: ${h.shown()}")
+        ChatLog.add(this, true, if (dual && h.bn.isNotBlank()) "${h.en}\n${h.bn}" else h.en, "voice")
 
         val asker = object : Actions.Asker {
             override suspend fun ask(question: String): String? {

@@ -175,7 +175,7 @@ half4 main(float2 fragCoord) {
 class Kit(private val ctx: Context) {
     fun dp(v: Number) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), ctx.resources.displayMetrics).toInt()
 
-    private fun rounded(fill: Int, radius: Int, stroke: Int = 0, strokeColor: Int = 0) = GradientDrawable().apply {
+    fun rounded(fill: Int, radius: Int, stroke: Int = 0, strokeColor: Int = 0) = GradientDrawable().apply {
         setColor(fill); cornerRadius = dp(radius).toFloat()
         if (stroke > 0) setStroke(dp(stroke), strokeColor)
     }
@@ -258,6 +258,96 @@ class Kit(private val ctx: Context) {
         }
         box.addView(t); box.addView(bar)
         return box
+    }
+
+    /** Thin progress bar; [showProgress] drives it from a status line like "Brain: 120 / 2614 MB". */
+    fun bar(): android.widget.ProgressBar =
+        android.widget.ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progressTintList = ColorStateList.valueOf(Look.TEXT)
+            progressBackgroundTintList = ColorStateList.valueOf(0x33FFFFFF)
+            indeterminateTintList = ColorStateList.valueOf(Look.TEXT)
+            layoutParams = LinearLayout.LayoutParams(-1, dp(8)).apply { topMargin = dp(8) }
+            visibility = View.GONE
+        }
+
+    fun showProgress(bar: android.widget.ProgressBar, msg: String) {
+        val m = Regex("(\\d+) / (\\d+) MB").find(msg)
+        when {
+            m != null -> {
+                val done = m.groupValues[1].toLong()
+                val total = m.groupValues[2].toLong().coerceAtLeast(1)
+                bar.isIndeterminate = false
+                bar.progress = (done * 100 / total).toInt().coerceIn(0, 100)
+                bar.visibility = View.VISIBLE
+            }
+            Regex("(?i)queued|starting|checking|retrying|paused|continue|syncing").containsMatchIn(msg) -> {
+                bar.isIndeterminate = true
+                bar.visibility = View.VISIBLE
+            }
+            else -> bar.visibility = View.GONE
+        }
+    }
+
+    /** Small rounded shortcut button. */
+    fun chip(t: String, onClick: () -> Unit) = TextView(ctx).apply {
+        text = t; textSize = 13f; setTextColor(Look.TEXT); typeface = Look.semibold
+        setPadding(dp(14), dp(8), dp(14), dp(8))
+        background = RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), rounded(0xB3141418.toInt(), 18, 1, Look.EDGE), rounded(Color.WHITE, 18))
+        layoutParams = LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(8) }
+        setOnClickListener { onClick() }
+    }
+
+    /** Round icon button (send, mic). */
+    fun round(label: String, primary: Boolean, onClick: () -> Unit) = TextView(ctx).apply {
+        text = label; textSize = 18f; gravity = Gravity.CENTER; typeface = Look.semibold
+        setTextColor(if (primary) Look.BG else Look.TEXT)
+        val shape = GradientDrawable().apply { this.shape = GradientDrawable.OVAL; setColor(if (primary) 0xFFF4F4F5.toInt() else 0xB3141418.toInt()); if (!primary) setStroke(dp(1), Look.EDGE) }
+        val mask = GradientDrawable().apply { this.shape = GradientDrawable.OVAL; setColor(Color.WHITE) }
+        background = RippleDrawable(ColorStateList.valueOf(if (primary) 0x33000000 else 0x33FFFFFF), shape, mask)
+        layoutParams = LinearLayout.LayoutParams(dp(46), dp(46)).apply { leftMargin = dp(8) }
+        setOnClickListener { onClick() }
+    }
+
+    /** A chat bubble: yours on the right (light), Topshe's on the left (dark glass). */
+    fun bubble(fromYou: Boolean, text: String, voice: Boolean): View {
+        val maxW = (ctx.resources.displayMetrics.widthPixels * 0.78).toInt()
+        val t = TextView(ctx).apply {
+            this.text = if (fromYou && voice) "🎙 $text" else text
+            textSize = 15f; setLineSpacing(0f, 1.15f); maxWidth = maxW
+            setTextColor(if (fromYou) Look.BG else Look.TEXT)
+            setTextIsSelectable(true)
+            background = if (fromYou) rounded(0xF2F4F4F5.toInt(), 18) else rounded(0xD9141418.toInt(), 18, 1, Look.EDGE)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+        }
+        return LinearLayout(ctx).apply {
+            gravity = if (fromYou) Gravity.END else Gravity.START
+            setPadding(0, dp(4), 0, dp(4))
+            addView(t)
+        }
+    }
+
+    /** Bottom tab bar. */
+    fun tabBar(names: List<String>, onPick: (Int) -> Unit): Pair<LinearLayout, List<TextView>> {
+        val bar = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = rounded(0xE60E0E12.toInt(), 26, 1, Look.EDGE)
+            setPadding(dp(6), dp(6), dp(6), dp(6))
+        }
+        val tabs = names.mapIndexed { i, n ->
+            TextView(ctx).apply {
+                text = n; textSize = 14f; typeface = Look.semibold; gravity = Gravity.CENTER
+                setPadding(0, dp(10), 0, dp(10))
+                setOnClickListener { onPick(i) }
+                bar.addView(this, LinearLayout.LayoutParams(0, -2, 1f))
+            }
+        }
+        return bar to tabs
+    }
+
+    fun selectTab(tabs: List<TextView>, i: Int) = tabs.forEachIndexed { j, t ->
+        t.setTextColor(if (i == j) Look.BG else Look.MUTED)
+        t.background = if (i == j) rounded(0xFFF4F4F5.toInt(), 20) else null
     }
 
     /** Coloured dot + text, for the status line. */

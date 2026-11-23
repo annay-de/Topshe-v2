@@ -18,11 +18,13 @@ object Updater {
     fun installedBuild(ctx: Context): Long =
         ctx.packageManager.getPackageInfo(ctx.packageName, 0).longVersionCode
 
-    /** The newest published app build: (build number, APK asset API url), or null. */
-    fun latest(ctx: Context): Pair<Int, String>? {
+    data class Build(val number: Int, val url: String, val bytes: Long)
+
+    /** The newest published app build (number, APK asset API url, size), or null. */
+    fun latest(ctx: Context): Build? {
         val prefs = Prefs(ctx)
         val rels = Sync.getJson(prefs, "/repos/${prefs.githubRepo}/releases?per_page=100") as? JSONArray ?: return null
-        var best: Pair<Int, String>? = null
+        var best: Build? = null
         for (i in 0 until rels.length()) {
             val r = rels.getJSONObject(i)
             val n = r.optString("tag_name").removePrefix("build-").toIntOrNull() ?: continue
@@ -30,7 +32,7 @@ object Updater {
             val assets = r.optJSONArray("assets") ?: continue
             val apk = (0 until assets.length()).map { assets.getJSONObject(it) }
                 .firstOrNull { it.optString("name").endsWith(".apk") } ?: continue
-            if (best == null || n > best.first) best = n to apk.getString("url")
+            if (best == null || n > best.number) best = Build(n, apk.getString("url"), apk.optLong("size"))
         }
         return best
     }
@@ -38,7 +40,7 @@ object Updater {
     /** "Build 31 is ready" or null if this is the newest. */
     fun available(ctx: Context): Int? {
         if (Prefs(ctx).githubToken.isBlank()) return null
-        val (n, _) = latest(ctx) ?: return null
+        val n = latest(ctx)?.number ?: return null
         return n.takeIf { it > installedBuild(ctx) }
     }
 
@@ -47,7 +49,10 @@ object Updater {
     /** Downloads the newest APK into an install session; Android then shows its "Update?" screen. */
     fun downloadAndInstall(ctx: Context, progress: (String) -> Unit): String {
         if (Prefs(ctx).githubToken.isBlank()) return "Add your GitHub token first (step 5)."
-        val (n, url) = latest(ctx) ?: return "No app builds found."
+        val b = latest(ctx) ?: return "No app builds found."
+        val n = b.number
+        val url = b.url
+        val totalMb = b.bytes shr 20
         if (n <= installedBuild(ctx)) return "The app is up to date (build ${installedBuild(ctx)})."
         if (!canInstall(ctx)) return "Allow Topshe to install updates first, then tap again."
         val installer = ctx.packageManager.packageInstaller
@@ -65,7 +70,7 @@ object Updater {
                         if (k <= 0) break
                         out.write(buf, 0, k)
                         total += k
-                        if (total shr 21 != shown) { shown = total shr 21; progress("Downloading build $n: ${total shr 20} MB") }
+                        if (total shr 21 != shown) { shown = total shr 21; progress("Downloading build $n: ${total shr 20} / $totalMb MB") }
                     }
                 }
                 session.fsync(out)

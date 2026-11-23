@@ -40,6 +40,9 @@ class Memory(private val ctx: Context) {
         return true
     }
 
+    /** Removes exactly this fact (the delete button on the Memory screen). */
+    fun removeFact(fact: String) = saveFacts(facts().filter { it != fact })
+
     /** Removes facts that match what you said; returns how many were removed. */
     fun forget(what: String): Int {
         val list = facts()

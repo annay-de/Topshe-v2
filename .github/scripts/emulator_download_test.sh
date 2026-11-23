@@ -48,3 +48,21 @@ adb logcat -d -s Topshe:I AndroidRuntime:E System.err:W | tail -120
 adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb pull /sdcard/ui.xml ui.xml >/dev/null 2>&1
 echo "----- on-screen text -----"
 python3 .github/scripts/find_node.py ui.xml --all | head -40
+
+echo "----- chat screen -----"
+find_and_tap "Chat" && sleep 2
+adb exec-out screencap -p > screen_4_chat.png
+adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb pull /sdcard/ui.xml ui.xml >/dev/null 2>&1
+E=$(python3 .github/scripts/find_node.py ui.xml --class android.widget.EditText)
+if [ -n "$E" ]; then
+  adb shell input tap $E; sleep 1
+  adb shell input text "what%scan%syou%sdo"
+  find_and_tap "↑"
+  sleep 8
+  adb exec-out screencap -p > screen_5_chat_reply.png
+  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb pull /sdcard/ui.xml ui.xml >/dev/null 2>&1
+  if python3 .github/scripts/find_node.py ui.xml --all | grep -q "brain on the phone"; then echo "CHAT RESULT: REPLY SHOWN"; else echo "CHAT RESULT: NO REPLY"; fi
+else
+  echo "CHAT RESULT: NO INPUT BOX"
+fi
+adb logcat -d -s AndroidRuntime:E | tail -30

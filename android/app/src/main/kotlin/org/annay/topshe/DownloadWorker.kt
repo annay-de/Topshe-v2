@@ -105,10 +105,13 @@ class DownloadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
     private fun info(text: String): ForegroundInfo {
         val nm = applicationContext.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(CHANNEL, "Topshe downloads", NotificationManager.IMPORTANCE_LOW))
+        val m = Regex("(\\d+) / (\\d+) MB").find(text)
+        val pct = m?.let { (it.groupValues[1].toLong() * 100 / it.groupValues[2].toLong().coerceAtLeast(1)).toInt() }
         val n = android.app.Notification.Builder(applicationContext, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(if (isBrain) "Topshe: downloading the brain" else "Topshe: downloading voice models")
             .setContentText(text)
+            .setProgress(100, pct ?: 0, pct == null)       // progress bar in the notification too
             .setOngoing(true)
             .build()
         return if (Build.VERSION.SDK_INT >= 29) ForegroundInfo(notifId, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)

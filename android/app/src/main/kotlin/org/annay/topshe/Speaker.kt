@@ -39,9 +39,16 @@ class Speaker(ctx: Context) : TextToSpeech.OnInitListener {
         ready.complete(status == TextToSpeech.SUCCESS)
     }
 
+    /** Gets every reply as text too (for the chat screen). */
+    @Volatile var echo: ((String) -> Unit)? = null
+    /** Chat screen with sound off: show the reply, don't speak it. */
+    @Volatile var muted = false
+
     /** Speaks and waits until finished (so the mic doesn't hear Topshe itself). */
     suspend fun say(text: String) {
-        if (!ready.await() || text.isBlank()) return
+        if (text.isBlank()) return
+        echo?.invoke(text)
+        if (muted || !ready.await()) return
         val id = UUID.randomUUID().toString()
         val done = CompletableDeferred<Unit>()
         pending[id] = done
