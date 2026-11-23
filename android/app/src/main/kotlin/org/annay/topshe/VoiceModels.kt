@@ -43,51 +43,94 @@ object VoiceModels {
 
     // ---------- download ----------
 
-    private fun open(url: String): InputStream {
+    /** Opens a download (following GitHub's redirect to its file host). Says which host failed and why. */
+    private fun open(url: String): Pair<InputStream, Long> {
         var u = URL(url)
-        repeat(5) {   // follow redirects (GitHub -> its file host)
+        repeat(6) {
             val c = u.openConnection() as HttpURLConnection
             c.instanceFollowRedirects = false
-            c.connectTimeout = 20_000; c.readTimeout = 60_000
-            when (c.responseCode) {
-                in 200..299 -> return c.inputStream.buffered(1 shl 16)
-                in 300..399 -> u = URL(u, c.getHeaderField("Location"))
-                else -> throw IllegalStateException("HTTP ${c.responseCode} for ${u.path.substringAfterLast('/')}")
+            c.connectTimeout = 30_000; c.readTimeout = 90_000
+            c.setRequestProperty("User-Agent", "Topshe-Android")
+            val code = try { c.responseCode } catch (e: Exception) {
+                throw IllegalStateException("can't reach ${u.host} (${e.javaClass.simpleName}: ${e.message})", e)
+            }
+            when (code) {
+                in 200..299 -> return c.inputStream.buffered(1 shl 16) to c.contentLengthLong
+                in 300..399 -> u = URL(u, c.getHeaderField("Location") ?: throw IllegalStateException("redirect without location from ${u.host}"))
+                else -> throw IllegalStateException("${u.host} answered HTTP $code for ${u.path.substringAfterLast('/')}")
             }
         }
-        throw IllegalStateException("Too many redirects")
+        throw IllegalStateException("too many redirects")
+    }
+
+    /** Wraps a download so [progress] hears "label: 12 / 40 MB" about every 2 MB. */
+    private fun counted(input: InputStream, total: Long, label: String, progress: (String) -> Unit): InputStream =
+        object : java.io.FilterInputStream(input) {
+            var n = 0L
+            var shown = -1L
+            fun tick(k: Int) {
+                if (k <= 0) return
+                n += k
+                val mb = n / (2L shl 20)
+                if (mb != shown) {
+                    shown = mb
+                    progress(if (total > 0) "$label: ${n shr 20} / ${total shr 20} MB" else "$label: ${n shr 20} MB")
+                }
+            }
+            override fun read(): Int = super.read().also { if (it >= 0) tick(1) }
+            override fun read(b: ByteArray, off: Int, len: Int): Int = super.read(b, off, len).also { tick(it) }
+        }
+
+    /** Tries [block] up to 3 times (networks drop). The last error is passed on. */
+    private fun <T> withRetries(label: String, progress: (String) -> Unit, block: () -> T): T {
+        var last: Throwable? = null
+        for (attempt in 1..3) {
+            try { return block() } catch (e: Exception) {
+                last = e
+                if (attempt < 3) { progress("$label: problem (${e.message}), retrying..."); Thread.sleep(3000L * attempt) }
+            }
+        }
+        throw IllegalStateException("$label failed: ${last?.message}", last)
     }
 
     /** Downloads a .tar.bz2 and keeps the top-level files (no sub-folders) that pass [keep]. */
-    private fun untarBz2(url: String, dest: File, keep: (String) -> Boolean) {
+    private fun untarBz2(url: String, dest: File, label: String, progress: (String) -> Unit, keep: (String) -> Boolean) {
         val tmp = File(dest.path + ".tmp").apply { deleteRecursively(); mkdirs() }
-        TarArchiveInputStream(BZip2CompressorInputStream(open(url))).use { tar ->
+        val (raw, total) = open(url)
+        var kept = 0
+        TarArchiveInputStream(BZip2CompressorInputStream(counted(raw, total, label, progress))).use { tar ->
             var e = tar.nextEntry
             while (e != null) {
                 val rel = e.name.substringAfter('/', "")
                 if (!e.isDirectory && rel.isNotEmpty() && !rel.contains("..") && !rel.contains('/') && keep(rel)) {
                     File(tmp, rel).outputStream().use { tar.copyTo(it) }
+                    kept++
                 }
                 e = tar.nextEntry
             }
         }
+        if (kept == 0) throw IllegalStateException("$label: the download had no usable files")
         dest.deleteRecursively()
-        tmp.renameTo(dest)
+        if (!tmp.renameTo(dest)) throw IllegalStateException("$label: couldn't save the files")
     }
 
     fun downloadAll(ctx: Context, progress: (String) -> Unit) {
         if (!File(Store.wakeModel(ctx), "tokens.txt").exists()) {
-            progress("Downloading wake-word model (~15 MB)...")
-            untarBz2(KWS_URL, Store.wakeModel(ctx)) { true }
+            withRetries("Wake-word model", progress) {
+                untarBz2(KWS_URL, Store.wakeModel(ctx), "Wake-word model (1/3)", progress) { true }
+            }
         }
         if (Store.speakerModel(ctx).length() < 1_000_000) {
-            progress("Downloading voice-check model (~25 MB)...")
-            var last: Exception? = null
+            var last: Throwable? = null
             for (name in SPEAKER_FILES) {
                 try {
-                    val tmp = File(Store.speakerModel(ctx).path + ".tmp")
-                    open(SPEAKER_BASE + name).use { input -> tmp.outputStream().use { input.copyTo(it) } }
-                    tmp.renameTo(Store.speakerModel(ctx))
+                    withRetries("Voice-check model", progress) {
+                        val tmp = File(Store.speakerModel(ctx).path + ".tmp")
+                        val (input, total) = open(SPEAKER_BASE + name)
+                        counted(input, total, "Voice-check model (2/3)", progress).use { i -> tmp.outputStream().use { i.copyTo(it, 1 shl 16) } }
+                        if (tmp.length() < 1_000_000 || !tmp.renameTo(Store.speakerModel(ctx)))
+                            throw IllegalStateException("voice-check file incomplete (${tmp.length()} bytes)")
+                    }
                     last = null
                     break
                 } catch (e: Exception) { last = e }
@@ -95,8 +138,11 @@ object VoiceModels {
             last?.let { throw it }
         }
         if (Store.sttModel(ctx).listFiles()?.any { it.name.contains("encoder") } != true) {
-            progress("Downloading speech-to-text model (Whisper, ~280 MB download)...")
-            untarBz2(STT_URL, Store.sttModel(ctx)) { name -> name.contains(".int8.") || name.endsWith("tokens.txt") }
+            withRetries("Speech-to-text model", progress) {
+                untarBz2(STT_URL, Store.sttModel(ctx), "Speech-to-text model (3/3, the big one)", progress) { name ->
+                    name.contains(".int8.") || name.endsWith("tokens.txt")
+                }
+            }
         }
         progress("Voice models ready.")
     }

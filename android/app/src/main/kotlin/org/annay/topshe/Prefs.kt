@@ -96,6 +96,7 @@ object ActivityLog {
 
     @Synchronized
     fun add(ctx: Context, msg: String) {
+        android.util.Log.i("Topshe", msg)            // also visible over USB (adb logcat -s Topshe)
         val f = Store.logFile(ctx)
         val lines = (if (f.exists()) f.readLines() else emptyList()).takeLast(199) +
             "${fmt.format(Date())}  $msg"

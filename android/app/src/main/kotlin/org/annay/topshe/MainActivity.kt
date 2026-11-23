@@ -37,6 +37,8 @@ class MainActivity : Activity() {
     private lateinit var startBtn: Button
     private lateinit var facts: TextView
     @Volatile private var enrolling = false
+    @Volatile private var downloading = false
+    private lateinit var dlStatus: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -111,6 +113,8 @@ class MainActivity : Activity() {
         col.addView(heading("2. Voice models"))
         col.addView(note("Wake word, voice check and Whisper speech-to-text. Free and open source, about 330 MB to download once (use Wi-Fi)."))
         col.addView(button("Download voice models") { downloadVoiceModels() })
+        dlStatus = note(if (Store.voiceModelsReady(this)) "Voice models ready." else "Not downloaded yet.").apply { alpha = 1f }
+        col.addView(dlStatus)
 
         col.addView(heading("3. Teach it your voice"))
         col.addView(note("Tap, then talk normally for 25 seconds in a quiet room - read anything out loud. Only this voice will be able to use Topshe."))
@@ -266,13 +270,24 @@ class MainActivity : Activity() {
     }
 
     private fun downloadVoiceModels() {
+        if (downloading) return
+        downloading = true
+        dlStatus.text = "Starting download (keep this screen open)..."
         Thread {
-            try {
-                VoiceModels.downloadAll(this) { setStatus(it) }
-            } catch (e: Exception) {
-                setStatus("Download failed: ${e.message}. Check internet and try again.")
+            val error = try {
+                VoiceModels.downloadAll(this) { msg -> android.util.Log.i("Topshe", msg); runOnUiThread { dlStatus.text = msg } }
+                null
+            } catch (t: Throwable) {   // Throwable: show every kind of failure, never fail silently
+                ActivityLog.add(this, "Voice model download failed: ${t.message}\n" +
+                    t.stackTraceToString().lines().take(12).joinToString("\n"))
+                (t.message ?: t.javaClass.simpleName) + (t.cause?.let { " [${it.javaClass.simpleName}]" } ?: "")
+            } finally {
+                downloading = false
             }
-            runOnUiThread { refresh() }
+            runOnUiThread {
+                refresh()
+                dlStatus.text = if (error == null) "Voice models ready." else "Download failed: $error\nTap the button to try again."
+            }
         }.start()
     }
 

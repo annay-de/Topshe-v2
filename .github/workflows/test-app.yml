@@ -1,0 +1,42 @@
+name: Test the app on an emulator
+
+# Installs a released APK on an Android emulator, taps "Download voice models"
+# and prints what the app logs. For finding problems without needing the phone.
+on:
+  workflow_dispatch:
+    inputs:
+      build:
+        description: "APK release to test, e.g. build-20 (empty = newest)"
+        required: false
+
+jobs:
+  emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Get the APK
+        run: |
+          TAG="${{ github.event.inputs.build }}"
+          if [ -z "$TAG" ]; then
+            TAG=$(gh release list -R "$GITHUB_REPOSITORY" --limit 100 --json tagName --jq '[.[].tagName | select(startswith("build-")) | ltrimstr("build-") | tonumber] | max | "build-\(.)"')
+          fi
+          echo "Testing $TAG"
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p '*.apk' -D apk
+          ls -la apk
+      - name: Run on the emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash .github/scripts/emulator_download_test.sh
