@@ -17,8 +17,21 @@ adb shell input swipe $X $Y1 $X $Y2 400; sleep 2
 adb exec-out screencap -p > screen_2_scrolled.png
 adb shell input swipe $X $Y2 $X $Y1 400; sleep 2
 
+# The slow emulator sometimes shows "Pixel Launcher isn't responding": press Wait
+dismiss_anr() {
+  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+  adb pull /sdcard/ui.xml ui.xml >/dev/null 2>&1
+  if grep -q "isn't responding" ui.xml; then
+    W8=$(python3 .github/scripts/find_node.py ui.xml "Wait")
+    if [ -n "$W8" ]; then adb shell input tap $W8; else adb shell input keyevent KEYCODE_BACK; fi
+    echo "(dismissed a system 'not responding' dialog)"; sleep 2
+    adb shell am start -n "$PKG/org.annay.topshe.MainActivity" >/dev/null; sleep 3
+  fi
+}
+
 find_and_tap() {
   for i in $(seq 1 10); do
+    dismiss_anr
     adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
     adb pull /sdcard/ui.xml ui.xml >/dev/null 2>&1
     B=$(python3 .github/scripts/find_node.py ui.xml "$1")
