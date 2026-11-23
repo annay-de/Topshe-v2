@@ -186,7 +186,8 @@ def ex_media():
     if r < 0.35:
         q = random.choice(SONGS + ARTISTS + [f"{s} by {a}" for s, a in zip(SONGS, ARTISTS)])
         text = random.choice(["play {q}", "play {q} on spotify", "put on {q}", "{q} chalao", "{q} bajao",
-                              "i want to hear {q}", "can you play {q}"]).format(q=q)
+                              "i want to hear {q}", "can you play {q}", "{q} er gaan chalao", "{q} chalao na",
+                              "spotify te {q} chalao"]).format(q=q)
         return text, {"action": "media", "op": "play", "query": q, "source": "spotify"}
     if r < 0.5:
         q = random.choice(["lofi beats", "the news", "a cooking video", "IPL highlights", "standup comedy",
@@ -195,7 +196,7 @@ def ex_media():
                               "find {q} on youtube"]).format(q=q)
         return text, {"action": "media", "op": "play", "query": q, "source": "youtube"}
     op, phrases = random.choice([
-        ("play", ["play some music", "play music", "resume the music", "music chalao", "gaana chalao"]),
+        ("play", ["play some music", "play music", "resume the music", "music chalao", "gaana chalao", "gaan chalao"]),
         ("pause", ["pause the music", "pause it", "stop the song", "gaana band karo"]),
         ("next", ["next song", "skip this", "play the next one", "agla gaana"]),
         ("previous", ["previous song", "go back one song", "play the last song again"]),
@@ -257,6 +258,38 @@ MEMORY_CHATS = [
 ALIAS_FACTS = {f for must, _, _ in MEMORY_CMDS for f in must}
 
 
+# Who Topshe is (written for Topshe; answers kept short, like Annay wants)
+IDENTITY_CHATS = [
+    (["who are you", "what are you", "tumi ke", "introduce yourself"],
+     "I'm Topshe, your assistant. I play music, set alarms and reminders, call or message people, open apps and answer questions."),
+    (["what can you do", "what all can you do", "help"],
+     "I can play music, set alarms, timers and reminders, call or message people, open apps, run Tasker tasks, remember things for you and answer questions."),
+    (["who made you", "who built you"], "Annay built me."),
+    (["are you listening", "you there", "topshe are you there"], "Yes, I'm here."),
+    (["thank you", "thanks topshe", "thanks"], "Anytime."),
+    (["good night topshe", "good night"], "Good night, Annay."),
+]
+
+# Held-out memory checks (facts NEVER used in training): does Topshe use what it was told?
+EVAL_MEMORY_CHATS = [
+    ("my dentist appointment is on Thursday at 4 pm", "when is my dentist appointment?", "4"),
+    ("my bike is a blue Hero Splendor", "what bike do I have?", "splendor"),
+    ("my favourite food is kosha mangsho", "what's my favourite food?", "kosha"),
+    ("Riju is my cousin", "who is Riju?", "cousin"),
+    ("my flight to Kolkata is on 18 December", "when is my flight?", "18"),
+    ("my locker code hint is my roll number", "what's my locker code hint?", "roll"),
+    ("my thesis advisor is Professor Mehta", "who is my thesis advisor?", "mehta"),
+    ("I keep my passport in the blue folder", "where is my passport?", "blue"),
+]
+EVAL_MEMORY_CMDS = [
+    ("my cousin is called Riju", "call my cousin", {"action": "call", "contact": "Riju"}),
+    ("my advisor is Professor Mehta", "message my advisor that I'll be late",
+     {"action": "message", "app": "WhatsApp", "contact": "Professor Mehta", "text": "I'll be late"}),
+    ("my favourite band is Coldplay", "play my favourite band",
+     {"action": "media", "op": "play", "query": "Coldplay", "source": "spotify"}),
+]
+
+
 def random_facts(k_max=6, must=None):
     pool = [f for f in FACTS if f not in (must or []) and f not in ALIAS_FACTS]
     facts = random.sample(pool, random.randint(0, k_max)) + list(must or [])
@@ -308,17 +341,34 @@ def make_rows(seed=42):
         for fact, questions, answer in MEMORY_CHATS:
             for q in questions:
                 rows.append(row(with_facts(CHAT_SYSTEM, random_facts(5, [fact])), noisy(q), answer, "memory_chat"))
+    for _ in range(8):
+        for qs, answer in IDENTITY_CHATS:
+            for q in qs:
+                rows.append(row(with_facts(CHAT_SYSTEM, random_facts(4) if random.random() < 0.4 else []),
+                                noisy(q), answer, "identity"))
     random.shuffle(rows)
     return rows
 
 
-def user_rows(interactions, facts):
+def eval_memory_rows():
+    """Held-out memory checks (never trained on)."""
+    chats = [row(with_facts(CHAT_SYSTEM, random_facts(4, [f])), q, key, "eval_memory_chat") for f, q, key in EVAL_MEMORY_CHATS]
+    cmds = [row(with_facts(CMD_SYSTEM, random_facts(4, [f])), q, dumps(out), "eval_memory_cmd") for f, q, out in EVAL_MEMORY_CMDS]
+    return chats, cmds
+
+
+def user_rows(interactions, facts, now_ts=None):
     """
     Turns the phone's interaction log into training rows. Only trusted examples:
       - ok / confirmed commands (Topshe did it and you didn't object)
       - corrections ("no, I meant ...") -> the corrected action
     Cancelled actions and Topshe's own chat answers are never trained on.
+
+    Each row gets a weight (how many copies go into training):
+      correction 5, confirmed 3, ok 2;  x1.5 if from the last 14 days.
     """
+    import time as _time
+    now_ts = now_ts or _time.time()
     final = {}   # last word wins: a later correction or cancel overrides an earlier "ok"
     for it in interactions:
         heard = (it.get("heard") or "").strip()
@@ -332,12 +382,22 @@ def user_rows(interactions, facts):
             continue
         if action.get("action") == "chat":
             continue
-        out.append(row(with_facts(CMD_SYSTEM, facts), heard, dumps(action), "user"))
+        w = {"corrected": 5, "confirmed": 3, "ok": 2}[outcome]
+        if now_ts - float(it.get("ts") or 0) < 14 * 86400:
+            w *= 1.5
+        r = row(with_facts(CMD_SYSTEM, facts), heard, dumps(action), "user")
+        r["weight"] = max(1, round(w))
+        out.append(r)
     return out
 
 
 COMMAND_START = re.compile(r"^(hey |ok )?(topshe )?(play|pause|call|ring|phone|message|text|whatsapp|remind|set|wake|timer|"
                            r"alarm|open|launch|turn|switch|remember|forget|stop|next|skip|volume|mute)\b", re.I)
+
+
+# Phone-command phrases anywhere in a message: skip it (it might really be a command)
+COMMAND_ANYWHERE = re.compile(r"\b(remind me|set (an |a )?(alarm|timer|reminder)|wake me|call (my|maa|baba|him|her)|"
+                              r"play (some|the|a|my)|open (the )?app|whatsapp|send (a )?message|turn (on|off)|volume)\b", re.I)
 
 
 def style_rows(messages, facts, k=1500, seed=0):
@@ -347,7 +407,8 @@ def style_rows(messages, facts, k=1500, seed=0):
     your normal talk for a phone command. Messages that look like phone commands are skipped.
     """
     rnd = random.Random(seed)
-    pool = [m["text"] for m in messages if m.get("text") and not COMMAND_START.search(m["text"].strip())]
+    pool = [m["text"] for m in messages
+            if m.get("text") and not COMMAND_START.search(m["text"].strip()) and not COMMAND_ANYWHERE.search(m["text"])]
     rnd.shuffle(pool)
     out = []
     for t in pool[:k]:

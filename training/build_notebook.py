@@ -4,13 +4,21 @@ The weekly pipeline runs this before pushing to Kaggle; you can also import the
 .ipynb into Kaggle by hand and press Run All.
 
     python training/build_notebook.py
+
+Verified against the actual sources (Nov 2026):
+  - unsloth 2026.11.9: Qwen 3.5 loads through FastModel (it's a vision-language model);
+    needs transformers >= 5.2.0; 16-bit LoRA (Unsloth advises against 4-bit for Qwen 3.5)
+  - llama.cpp b12602: converts Qwen3_5ForConditionalGeneration; --no-mtp skips the extra
+    multi-token-prediction head (the phone doesn't use it, and a merged checkpoint may lack it)
+  - its converter pins transformers 4.57.6 / torch CPU, so it runs in its own venv
 """
 import json
 from pathlib import Path
 
 HERE = Path(__file__).parent
 BASE_MODEL = "unsloth/Qwen3.5-4B"
-LLAMA_CPP_TAG = "b12602"   # must match android/app/src/main/cpp/CMakeLists.txt
+LLAMA_CPP_TAG = "b12602"          # must match android/app/src/main/cpp/CMakeLists.txt
+UNSLOTH_VERSION = "2026.11.9"     # pinned: the version these steps were checked against
 
 cells = []
 
@@ -27,21 +35,26 @@ md(f"""# Topshe trainer (Qwen 3.5 4B)
 
 Used for the first training run **and** every weekly retrain (the GitHub pipeline pushes it here automatically).
 
-- Accelerator: **GPU T4** (one GPU is used). Internet: **On**.
-- If a dataset called `topshe-data` is attached, your real usage and corrections are added to training.
-- Outputs: `topshe_brain.gguf` (the phone model), `prompt_template.json`, `eval.json` (test scores), `lora/` (backup).
+- Accelerator: **GPU T4 x2** (one GPU is used). Internet: **On**.
+- If the `topshe-data` dataset is attached: your real usage, corrections, past messages and last week's scores are used.
+- Outputs: `topshe_brain.gguf` (phone model), `prompt_template.json`, `eval.json` (test scores),
+  `chat_distill.jsonl` (reused next week), `lora/` (backup).
 """)
 
-code("""# 1. Setup
-import os, time, json, glob, random, shutil, subprocess, hashlib
+code(f"""# 1. Setup (pinned versions)
+import os, time, json, glob, random, shutil, subprocess, hashlib, math
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 os.environ["WANDB_DISABLED"] = "true"
 T0 = time.time()
-!pip install -q --upgrade unsloth
+!pip install -q "unsloth=={UNSLOTH_VERSION}" "unsloth_zoo=={UNSLOTH_VERSION}" "transformers>=5.2.0,<=5.17.0"
 !nvidia-smi --query-gpu=name,memory.total --format=csv
 OUT = "/kaggle/working"
 TMP = "/tmp/topshe"
 os.makedirs(TMP, exist_ok=True)
+
+def sh(cmd):
+    print("$", cmd)
+    subprocess.run(cmd, shell=True, check=True)
 """)
 
 code(f"""# 2. Settings
@@ -49,82 +62,87 @@ BASE_MODEL = "{BASE_MODEL}"
 LLAMA_CPP_TAG = "{LLAMA_CPP_TAG}"
 MAX_LEN = 1024
 TRAIN_HOURS_LIMIT = 3.5        # training stops safely after this long
-USER_UPSAMPLE = 3              # your real examples count 3x
+N_DISTILL = 600                # general chat examples (made once, reused every week)
+N_STYLE = 1500                 # your past messages used per run
 """)
 
 gen_src = (HERE / "make_dataset_v3.py").read_text().split('if __name__ == "__main__":')[0]
 code("# 3. Training data generator (training/make_dataset_v3.py)\n" + gen_src)
 
-code("""# 4. Build the dataset: synthetic + your real usage (if attached) + general chat
-from datasets import load_dataset
+code("""# 4. Inputs from the topshe-data dataset (all optional)
+def find(name):
+    return next(iter(glob.glob(f"/kaggle/input/**/{name}", recursive=True)), None)
 
-synthetic = make_rows(seed=int(time.time()) % 100000)   # fresh phrasings every week
-random.seed(7)
+def read_jsonl(path):
+    return [json.loads(l) for l in open(path, encoding="utf-8") if l.strip()] if path else []
+
+interactions = read_jsonl(find("user_interactions.jsonl"))
+facts = json.load(open(find("facts.json"))).get("facts", []) if find("facts.json") else []
+past_messages = read_jsonl(find("claude_messages.jsonl"))
+distill_cached = [r for r in read_jsonl(find("chat_distill.jsonl")) if r.get("base_model") == BASE_MODEL]
+prev_eval = json.load(open(find("prev_eval.json"))) if find("prev_eval.json") else {}
+print(f"interactions {len(interactions)} | facts {len(facts)} | past messages {len(past_messages)} | "
+      f"cached chat {len(distill_cached)} | last week's scores: {bool(prev_eval)}")
+""")
+
+code("""# 5. Build the dataset (with automatic re-weighting)
+seed = int(time.time()) % 100000
+synthetic = make_rows(seed=seed)                      # fresh phrasings every week
 eval_synth = [r for r in synthetic if r["kind"] == "command"][:200]
 eval_keys = {r["user"] for r in eval_synth}
 train = [r for r in synthetic if r["user"] not in eval_keys]
 
-# Your data (from the phone, via the weekly pipeline)
-user_dir = next(iter(glob.glob("/kaggle/input/**/user_interactions.jsonl", recursive=True)), None)
-interactions, facts = [], []
-if user_dir:
-    interactions = [json.loads(l) for l in open(user_dir, encoding="utf-8") if l.strip()]
-    fp = os.path.join(os.path.dirname(user_dir), "facts.json")
-    if os.path.exists(fp):
-        facts = json.load(open(fp, encoding="utf-8")).get("facts", [])
+# Re-weighting 1: action types the current brain got wrong more often get extra examples
+per_action = ((prev_eval.get("synthetic") or {}).get("per_action") or {})
+extra = []
+for act, acc in per_action.items():
+    copies = 2 if acc < 0.85 else (1 if acc < 0.95 else 0)
+    pool = [r for r in train if r["kind"] == "command" and json.loads(r["assistant"]).get("action") == act]
+    extra += pool * copies
+    if copies:
+        print(f"re-weighting: {act} was {acc:.0%} correct -> {copies} extra copies")
+train += extra
+
+# Re-weighting 2: your own commands (corrections 5x, confirmed 3x, ok 2x, recent 1.5x)
 mine = user_rows(interactions, facts)
-# Hold back ~15% of your examples to test on (chosen by a stable hash, so the split doesn't move)
-def held(r): return int(hashlib.md5(r["user"].encode()).hexdigest(), 16) % 100 < 15
+def held(r): return int(hashlib.md5(r["user"].encode()).hexdigest(), 16) % 100 < 15   # stable 15% for testing
 eval_user = [r for r in mine if held(r)]
-train += [r for r in mine if not held(r)] * USER_UPSAMPLE
+for r in mine:
+    if not held(r):
+        train += [r] * r["weight"]
 
-# Your own past messages from your Claude export (style only; Claude's replies are never used)
-style_file = next(iter(glob.glob("/kaggle/input/**/claude_messages.jsonl", recursive=True)), None)
-style = []
-if style_file:
-    msgs = [json.loads(l) for l in open(style_file, encoding="utf-8") if l.strip()]
-    style = style_rows(msgs, facts, k=1500, seed=int(time.time()) % 1000)
-    train += style
+# Your past messages (your words only): how you talk, so normal talk isn't mistaken for a command
+style = style_rows(past_messages, facts, k=N_STYLE + 100, seed=seed)
+eval_style, style = style[:100], style[100:]
+train += style
 
-# General chat so Topshe can still talk normally (some with a memory block it should ignore)
-alpaca = load_dataset("yahma/alpaca-cleaned", split="train").shuffle(seed=int(time.time()) % 1000)
-n_chat = 0
-for r in alpaca:
-    if r["input"] or not (5 <= len(r["output"]) <= 350):
-        continue
-    sys_prompt = with_facts(CHAT_SYSTEM, random_facts(4) if random.random() < 0.3 else [])
-    train.append(row(sys_prompt, r["instruction"], r["output"], "chat"))
-    n_chat += 1
-    if n_chat >= 2500:
-        break
-random.shuffle(train)
-counts = {k: sum(1 for r in train if r["kind"] == k) for k in sorted({r["kind"] for r in train})}
-print("train:", len(train), counts, "| eval synthetic:", len(eval_synth), "| eval yours:", len(eval_user),
-      "| your interactions:", len(interactions), "| facts:", len(facts), "| your past messages:", len(style))
+eval_mem_chat, eval_mem_cmd = eval_memory_rows()
+print("synthetic", len(synthetic), "| re-weighted extra", len(extra), "| yours", len(mine),
+      "| style", len(style), "| eval: synth", len(eval_synth), "yours", len(eval_user), "style", len(eval_style))
 """)
 
-code("""# 5. Load the base model (16-bit LoRA: Unsloth advises against 4-bit training for Qwen 3.5)
-from unsloth import FastLanguageModel
+code("""# 6. Load Qwen 3.5 4B (16-bit LoRA, language layers only)
+from unsloth import FastModel
 import torch
 
-kw = dict(model_name=BASE_MODEL, max_seq_length=MAX_LEN, load_in_4bit=False)
-try:
-    model, tokenizer = FastLanguageModel.from_pretrained(load_in_16bit=True, full_finetuning=False, **kw)
-except TypeError:
-    model, tokenizer = FastLanguageModel.from_pretrained(**kw)
-model = FastLanguageModel.get_peft_model(
+model, processor = FastModel.from_pretrained(
+    model_name=BASE_MODEL, max_seq_length=MAX_LEN,
+    load_in_4bit=False, load_in_16bit=True, full_finetuning=False,
+)
+model = FastModel.get_peft_model(
     model, r=16, lora_alpha=16, lora_dropout=0, bias="none",
-    target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    finetune_vision_layers=False, finetune_language_layers=True,
+    finetune_attention_modules=True, finetune_mlp_modules=True,
     use_gradient_checkpointing="unsloth", random_state=3407,
 )
-tok = getattr(tokenizer, "tokenizer", tokenizer)   # multimodal models wrap the text tokenizer
+tok = getattr(processor, "tokenizer", processor)   # the text tokenizer inside the processor
 """)
 
-code("""# 6. One prompt format for training AND the phone (saved as prompt_template.json)
+code("""# 7. ONE prompt format for training AND the phone (saved as prompt_template.json)
 def render_prompt(system, user):
     msgs = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     last = None
-    for obj in (tok, tokenizer):            # text tokenizer first, then the multimodal processor
+    for obj in (tok, processor):
         for extra in ({"enable_thinking": False}, {}):
             try:
                 out = obj.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True, **extra)
@@ -141,104 +159,189 @@ json.dump({"template": TEMPLATE, "end": END, "base_model": BASE_MODEL,
            "cmd_system": CMD_SYSTEM, "chat_system": CHAT_SYSTEM, "facts_header": FACTS_HEADER},
           open(f"{OUT}/prompt_template.json", "w"), ensure_ascii=False, indent=1)
 print(repr(TEMPLATE))
+tok.padding_side = "right"
 
-def encode(r):
-    p = TEMPLATE.replace("{SYSTEM}", r["system"]).replace("{USER}", r["user"])
-    p_ids = tok(p, add_special_tokens=False)["input_ids"]
-    a_ids = tok(r["assistant"] + END + "\\n", add_special_tokens=False)["input_ids"]
-    ids = (p_ids + a_ids)[:MAX_LEN]
-    labels = ([-100] * len(p_ids) + a_ids)[:MAX_LEN]   # learn only Topshe's replies
-    return {"input_ids": ids, "attention_mask": [1] * len(ids), "labels": labels}
+def prompt_ids(system, user):
+    return tok(TEMPLATE.replace("{SYSTEM}", system).replace("{USER}", user), add_special_tokens=False)["input_ids"]
 
-from datasets import Dataset
-ds = Dataset.from_list([encode(r) for r in train])
-print(ds)
+def generate(system, user, max_new=96, model_=None):
+    m = model_ or model
+    ids = torch.tensor([prompt_ids(system, user)], device="cuda")
+    out = m.generate(input_ids=ids, attention_mask=torch.ones_like(ids), max_new_tokens=max_new,
+                     do_sample=False, pad_token_id=tok.pad_token_id if tok.pad_token_id is not None else tok.eos_token_id)
+    text = tok.decode(out[0][ids.shape[1]:], skip_special_tokens=True)
+    return text.split("</think>")[-1].strip()
 """)
 
-code("""# 7. Train (stops safely if it runs too long)
+code("""# 8. General chat, written by the base model itself (keeps its knowledge; made once, reused)
+# LoRA starts as a no-op, so before training the model answers exactly like plain Qwen 3.5 4B.
+if len(distill_cached) >= N_DISTILL // 2:
+    distill = distill_cached
+    print("Reusing", len(distill), "cached chat examples")
+    shutil.copy(find("chat_distill.jsonl"), f"{OUT}/chat_distill.jsonl")
+else:
+    from datasets import load_dataset
+    rnd = random.Random(1)
+    alpaca = [r["instruction"] for r in load_dataset("yahma/alpaca-cleaned", split="train")
+              if not r["input"] and 10 <= len(r["instruction"]) <= 200]
+    rnd.shuffle(alpaca)
+    yours = [m["text"] for m in past_messages if m["text"].rstrip().endswith("?") and 15 <= len(m["text"]) <= 200
+             and not COMMAND_ANYWHERE.search(m["text"])]
+    rnd.shuffle(yours)
+    questions = alpaca[: N_DISTILL * 2 // 3] + yours[: N_DISTILL // 3]
+    FastModel.for_inference(model)
+    distill = []
+    for i, q in enumerate(questions):
+        a = generate(CHAT_SYSTEM, q, max_new=110)
+        if 5 <= len(a) <= 500 and "<think>" not in a and not a.startswith("{"):
+            distill.append({"question": q, "answer": a, "base_model": BASE_MODEL})
+        if i % 100 == 0:
+            print(i, "|", q[:60], "->", a[:80])
+    FastModel.for_training(model)
+    with open(f"{OUT}/chat_distill.jsonl", "w", encoding="utf-8") as f:
+        for d in distill:
+            f.write(json.dumps(d, ensure_ascii=False) + "\\n")
+    print("Made", len(distill), "chat examples")
+for d in distill:
+    sys_prompt = with_facts(CHAT_SYSTEM, random_facts(4) if random.random() < 0.3 else [])
+    train.append(row(sys_prompt, d["question"], d["answer"], "chat"))
+random.shuffle(train)
+counts = {k: sum(1 for r in train if r["kind"] == k) for k in sorted({r["kind"] for r in train})}
+print("train rows:", len(train), counts)
+""")
+
+code("""# 9. Tokenise (learn only Topshe's replies, not the prompts)
+from datasets import Dataset
+
+def encode(r):
+    p_ids = prompt_ids(r["system"], r["user"])
+    a_ids = tok(r["assistant"] + END + "\\n", add_special_tokens=False)["input_ids"]
+    ids = (p_ids + a_ids)[:MAX_LEN]
+    labels = ([-100] * len(p_ids) + a_ids)[:MAX_LEN]
+    return {"input_ids": ids, "attention_mask": [1] * len(ids), "labels": labels}
+
+ds = Dataset.from_list([encode(r) for r in train])
+lens = sorted(len(x) for x in ds["input_ids"])
+print(ds, "| tokens: median", lens[len(lens) // 2], "max", lens[-1])
+""")
+
+code("""# 10. Train (stops safely if it runs too long)
 from transformers import Trainer, TrainingArguments, DataCollatorForSeq2Seq, TrainerCallback
 
 class TimeLimit(TrainerCallback):
     def on_step_end(self, args, state, control, **kw):
         if time.time() - T0 > TRAIN_HOURS_LIMIT * 3600:
-            print("Time limit reached - stopping training early (model is still saved)")
+            print("Time limit reached - stopping training early")
             control.should_training_stop = True
 
 bf16 = torch.cuda.is_bf16_supported()
 args = TrainingArguments(
-    output_dir=f"{TMP}/ckpt", per_device_train_batch_size=4, gradient_accumulation_steps=4,
+    output_dir=f"{TMP}/ckpt", per_device_train_batch_size=2, gradient_accumulation_steps=8,
     num_train_epochs=1, learning_rate=2e-4, warmup_steps=20, lr_scheduler_type="linear",
     logging_steps=25, optim="adamw_8bit", weight_decay=0.01, seed=3407,
-    fp16=not bf16, bf16=bf16, save_strategy="no", report_to="none",
-    group_by_length=True, remove_unused_columns=False,
+    fp16=not bf16, bf16=bf16, save_strategy="no", report_to="none", remove_unused_columns=False,
 )
 trainer = Trainer(model=model, args=args, train_dataset=ds,
                   data_collator=DataCollatorForSeq2Seq(tok, padding=True, label_pad_token_id=-100),
                   callbacks=[TimeLimit()])
-stats = trainer.train()
-model.save_pretrained(f"{OUT}/lora"); tok.save_pretrained(f"{OUT}/lora")
+trainer.train()
+losses = [h["loss"] for h in trainer.state.log_history if "loss" in h]
+print("loss: first", losses[:3], "last", losses[-3:])
+assert losses and all(math.isfinite(x) for x in losses), "Training loss became NaN/inf - stopping (nothing will be published)"
+model.save_pretrained(f"{OUT}/lora"); processor.save_pretrained(f"{OUT}/lora")
 print("Training done in %.0f min" % ((time.time() - T0) / 60))
 """)
 
-code("""# 8. Test: held-back synthetic commands + held-back real commands of yours
-FastLanguageModel.for_inference(model)
-
-def generate(system, user, max_new=96):
-    p = TEMPLATE.replace("{SYSTEM}", system).replace("{USER}", user)
-    ids = tok(p, add_special_tokens=False, return_tensors="pt").input_ids.to("cuda")
-    out = model.generate(input_ids=ids, max_new_tokens=max_new, do_sample=False,
-                         pad_token_id=tok.pad_token_id or tok.eos_token_id)
-    return tok.decode(out[0][ids.shape[1]:], skip_special_tokens=True).strip()
+code("""# 11. Test (the weekly quality gate uses these numbers)
+FastModel.for_inference(model)
 
 def score(rows):
     valid = action = exact = 0
-    misses = []
+    per, misses = {}, []
     for r in rows:
         truth = json.loads(r["assistant"])
         raw = generate(r["system"], r["user"])
+        ok_json, same = False, False
         try:
-            pred = json.loads(raw[raw.index("{"): raw.rindex("}") + 1]); valid += 1
+            pred = json.loads(raw[raw.index("{"): raw.rindex("}") + 1]); ok_json = True
+            action += pred.get("action") == truth.get("action")
+            same = pred == truth or (truth.get("action") == "chat" and pred.get("action") == "chat")
         except Exception:
-            misses.append((r["user"], raw)); continue
-        action += pred.get("action") == truth.get("action")
-        # chat queries may differ only in punctuation/case: count as exact
-        same = pred == truth or (truth.get("action") == "chat" and pred.get("action") == "chat")
-        exact += same
+            pass
+        valid += ok_json; exact += same
+        a = truth.get("action"); c = per.setdefault(a, [0, 0]); c[0] += same; c[1] += 1
         if not same: misses.append((r["user"], raw))
     n = max(len(rows), 1)
-    return {"n": len(rows), "valid": valid / n, "action": action / n, "exact": exact / n, "misses": misses[:20]}
+    return {"n": len(rows), "valid": valid / n, "action": action / n, "exact": exact / n,
+            "per_action": {k: v[0] / v[1] for k, v in per.items()}, "misses": misses[:25]}
 
-ev = {"synthetic": score(eval_synth), "yours": score(eval_user) if eval_user else None}
-ev["chat_sample"] = generate(with_facts(CHAT_SYSTEM, ["my shuttle leaves at 8:10 in the morning"]), "when is my shuttle?", 60)
-ev["general_sample"] = generate(CHAT_SYSTEM, "who directed pather panchali?", 60)
-ev["train_rows"] = len(train); ev["your_interactions"] = len(interactions); ev["base_model"] = BASE_MODEL
-ev["minutes"] = round((time.time() - T0) / 60)
+ev = {"synthetic": score(eval_synth)}
+ev["yours"] = score(eval_user) if eval_user else None
+ev["style_routing"] = score(eval_style)["action"] if eval_style else None      # your normal talk -> chat
+ev["memory_commands"] = score(eval_mem_cmd)["exact"]
+hits = 0
+for r in eval_mem_chat:
+    hits += r["assistant"].lower() in generate(r["system"], r["user"], 60).lower()
+ev["memory_chat"] = hits / len(eval_mem_chat)
+samples = {q: generate(with_facts(CHAT_SYSTEM, facts), q, 80) for q in
+           ["who directed pather panchali?", "what is an instrumental variable, simply?", "who are you?"]}
+ev["chat_samples"] = samples
+ev["chat_ok"] = all(5 <= len(a) <= 600 and not a.startswith("{") for a in samples.values())
+ev.update({"train_rows": len(train), "your_interactions": len(interactions), "base_model": BASE_MODEL,
+           "loss_last": losses[-1], "minutes_to_eval": round((time.time() - T0) / 60)})
 json.dump(ev, open(f"{OUT}/eval.json", "w"), ensure_ascii=False, indent=1)
-print(json.dumps({k: (v if k not in ("synthetic", "yours") or v is None else {x: v[x] for x in ("n", "valid", "action", "exact")}) for k, v in ev.items()}, indent=1))
+print(json.dumps({k: (v if not isinstance(v, dict) or "n" not in v else {x: v[x] for x in ("n", "valid", "action", "exact")})
+                  for k, v in ev.items()}, indent=1, ensure_ascii=False))
 """)
 
-code("""# 9. Export for the phone: merge -> GGUF (same llama.cpp version as the app) -> 4-bit Q4_K_M
-model.save_pretrained_merged(f"{TMP}/merged", tokenizer, save_method="merged_16bit")
+code("""# 12. Export for the phone: merge -> GGUF (same llama.cpp as the app) -> 4-bit -> smoke test
+model.save_pretrained_merged(f"{TMP}/merged", processor, save_method="merged_16bit")
 del model, trainer; torch.cuda.empty_cache()
 
-def sh(cmd):
-    print("$", cmd); subprocess.run(cmd, shell=True, check=True)
+LC = f"{TMP}/llama.cpp"
+sh(f"git clone --depth 1 --branch {LLAMA_CPP_TAG} https://github.com/ggml-org/llama.cpp {LC}")
+# The tokenizer isn't changed by training: use the base model's original tokenizer files
+# (the converter's pinned transformers version is tested against those)
+from huggingface_hub import snapshot_download
+tdir = snapshot_download(BASE_MODEL, allow_patterns=["tokenizer*", "vocab*", "merges*", "special_tokens_map.json",
+                                                     "added_tokens.json", "chat_template*"])
+for f in glob.glob(f"{tdir}/*"):
+    shutil.copy(f, f"{TMP}/merged/")
+# The converter pins its own transformers/torch versions: keep them out of this environment
+sh(f"python -m venv {TMP}/cvenv || (pip install -q virtualenv && python -m virtualenv {TMP}/cvenv)")
+sh(f"{TMP}/cvenv/bin/pip install -q -r {LC}/requirements/requirements-convert_hf_to_gguf.txt")
+sh(f"{TMP}/cvenv/bin/python {LC}/convert_hf_to_gguf.py {TMP}/merged --outfile {TMP}/brain-f16.gguf --outtype f16 --no-mtp")
+shutil.rmtree(f"{TMP}/merged", ignore_errors=True)
+sh(f"cmake -S {LC} -B {LC}/build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=OFF -DLLAMA_BUILD_TESTS=OFF "
+   f"-DLLAMA_BUILD_EXAMPLES=ON -DLLAMA_CURL=OFF > /dev/null")
+sh(f"cmake --build {LC}/build --target llama-quantize llama-simple -j 4 > /dev/null")
+sh(f"{LC}/build/bin/llama-quantize {TMP}/brain-f16.gguf {OUT}/topshe_brain.gguf Q4_K_M")
+os.remove(f"{TMP}/brain-f16.gguf")
 
-sh(f"git clone --depth 1 --branch {LLAMA_CPP_TAG} https://github.com/ggml-org/llama.cpp {TMP}/llama.cpp")
-sh(f"pip install -q -r {TMP}/llama.cpp/requirements/requirements-convert_hf_to_gguf.txt")
-sh(f"python {TMP}/llama.cpp/convert_hf_to_gguf.py {TMP}/merged --outfile {TMP}/brain-f16.gguf --outtype f16")
-sh(f"cmake -S {TMP}/llama.cpp -B {TMP}/build -DLLAMA_CURL=OFF -DGGML_CUDA=OFF -DLLAMA_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release > /dev/null")
-sh(f"cmake --build {TMP}/build --target llama-quantize -j 4 > /dev/null")
-q = glob.glob(f"{TMP}/build/bin/llama-quantize")[0]
-sh(f"{q} {TMP}/brain-f16.gguf {OUT}/topshe_brain.gguf Q4_K_M")
+# Smoke test the exact file the phone will run, with the exact prompt format
+smoke = [("wake me up at 6:45 tomorrow", "set_alarm"), ("play tum hi ho", "media"), ("call maa", "call"),
+         ("remember that my gym is at 7", "remember"), ("go to sleep", "stop"), ("why is the sky blue", "chat")]
+ok = 0
+for text, want in smoke:
+    p = TEMPLATE.replace("{SYSTEM}", CMD_SYSTEM).replace("{USER}", text)
+    r = subprocess.run([f"{LC}/build/bin/llama-simple", "-m", f"{OUT}/topshe_brain.gguf", "-n", "60", p],
+                       capture_output=True, text=True)
+    gen = r.stdout.split("</think>")[-1]
+    try:
+        got = json.loads(gen[gen.index("{"): gen.index("}", gen.index("{")) + 1]).get("action")
+    except Exception:
+        got = None
+    ok += got == want
+    print(f"{text!r:35} -> {got}")
 size = os.path.getsize(f"{OUT}/topshe_brain.gguf")
 sha = hashlib.sha256(open(f"{OUT}/topshe_brain.gguf", "rb").read()).hexdigest()
-ev.update({"gguf_bytes": size, "gguf_sha256": sha, "llama_cpp": LLAMA_CPP_TAG})
+ev.update({"gguf_smoke": ok / len(smoke), "gguf_bytes": size, "gguf_sha256": sha, "llama_cpp": LLAMA_CPP_TAG,
+           "minutes_total": round((time.time() - T0) / 60)})
 json.dump(ev, open(f"{OUT}/eval.json", "w"), ensure_ascii=False, indent=1)
-print("topshe_brain.gguf: %.2f GB, sha256 %s" % (size / 1e9, sha[:16]))
+print("topshe_brain.gguf: %.2f GB | phone-file smoke test %d/%d" % (size / 1e9, ok, len(smoke)))
 """)
 
-code("""# 10. Done
+code("""# 13. Done
 for p in sorted(glob.glob(f"{OUT}/*")):
     print(os.path.basename(p))
 print("Total %.0f min" % ((time.time() - T0) / 60))

@@ -38,3 +38,22 @@ v1 (July 2026) was a large design: Stata/LaTeX/git tools, a laptop link over Tai
 - **Each week trains from the base model** on all data so far, not on top of last week's brain, so errors can't pile up.
 - **Whisper base (multilingual, offline) replaces Vosk** for better accuracy on Indian English. An Auto setting handles Hindi and Bengali.
 - **Pipeline cost:** the GitHub Actions checks run only on Sunday and Monday, to keep within the free minutes for private repos. Kaggle uses about 3 GPU hours a week.
+
+## v2.2: re-verified training pipeline (Nov 2026)
+These were checked against the real sources (unsloth 2026.11.9, kaggle CLI 2.2.5, llama.cpp b12602), and the whole notebook was dry-run end to end.
+- **Qwen 3.5 loads through Unsloth's `FastModel`** (it's a vision-language model), with vision layers frozen. It **needs transformers ≥ 5.2**, so the notebook pins `unsloth==2026.11.9` and `transformers>=5.2,<=5.17`.
+- **Conversion uses `--no-mtp`:** Qwen 3.5's extra multi-token-prediction head isn't needed on the phone and may be missing after merging. The converter runs in its own venv, because it pins transformers 4.57.6. It uses the base model's original tokenizer files.
+- **Phone-file smoke test:** the exact GGUF the phone will run is tested with llama.cpp's `llama-simple` and the exact prompt format before it can be published.
+- **General chat comes from the base model itself (self-distillation),** not old Alpaca answers. This keeps Qwen 3.5's own knowledge and adds the short style. It's made once and reused every week (saves about 45 GPU minutes).
+- **Automatic re-weighting each week:**
+  - action types the current brain got wrong get extra examples (below 95% correct: 2x; below 85%: 3x)
+  - your corrections count 5x, confirmed commands 3x, ok commands 2x
+  - anything from the last 14 days counts 1.5x
+- **Your past Claude messages (your words only)** teach how you talk, labelled as conversation so normal talk isn't mistaken for a command. Anything that sounds like a phone command is skipped.
+- **The gate now also checks:**
+  - the phone-file smoke test (at least 5 of 6)
+  - chat sanity
+  - your normal talk recognised as chat (at least 85%)
+  - using remembered facts on held-out facts it never trained on (at least 50%)
+  - no drop versus the current brain
+- **Fixes:** the Kaggle CLI needs `six`, which it doesn't declare. Empty Kaggle login variables are removed. Kaggle run logs are saved to `retrain/last_run.log`. Collection runs every 3 hours, every day.

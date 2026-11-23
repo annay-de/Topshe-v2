@@ -93,6 +93,12 @@ def start():
     past = DATA / "data" / "claude_import" / "claude_messages.jsonl"
     if past.exists():
         shutil.copy(past, ds / "claude_messages.jsonl")
+    distill = DATA / "data" / "chat_distill.jsonl"          # general chat made once by the base model
+    if distill.exists():
+        shutil.copy(distill, ds / "chat_distill.jsonl")
+    prev = previous_manifest()                                # last week's scores -> automatic re-weighting
+    if prev and prev.get("eval"):
+        (ds / "prev_eval.json").write_text(json.dumps(prev["eval"]))
     facts = DATA / "data" / "facts.json"
     (ds / "facts.json").write_text(facts.read_text(encoding="utf-8") if facts.exists() else '{"facts": []}', encoding="utf-8")
     (ds / "dataset-metadata.json").write_text(json.dumps(
@@ -139,6 +145,14 @@ def kernel_status():
     return "unknown"
 
 
+def save_log():
+    """Keeps the latest Kaggle log in the data branch (retrain/last_run.log) for debugging."""
+    r = kaggle("kernels", "logs", KERNEL, check=False)
+    text = (r.stdout or "") + (r.stderr or "")
+    (DATA / "retrain").mkdir(parents=True, exist_ok=True)
+    (DATA / "retrain" / "last_run.log").write_text(text[-200_000:])
+
+
 def previous_manifest():
     r = run(["gh", "release", "list", "-R", REPO, "--limit", "100", "--json", "tagName"], check=False)
     tags = [t["tagName"] for t in json.loads(r.stdout or "[]") if t["tagName"].startswith("model-")]
@@ -153,12 +167,21 @@ def previous_manifest():
 
 
 def gate(ev, prev):
+    """Returns the reasons to reject a new brain (empty list = publish)."""
     s = ev.get("synthetic") or {}
     reasons = []
     if s.get("valid", 0) < MIN_VALID:
         reasons.append(f"valid JSON {s.get('valid', 0):.2f} < {MIN_VALID}")
     if s.get("exact", 0) < MIN_EXACT:
-        reasons.append(f"accuracy {s.get('exact', 0):.2f} < {MIN_EXACT}")
+        reasons.append(f"command accuracy {s.get('exact', 0):.2f} < {MIN_EXACT}")
+    if ev.get("gguf_smoke", 0) < 0.8:
+        reasons.append(f"the phone file failed its smoke test ({ev.get('gguf_smoke', 0):.2f})")
+    if not ev.get("chat_ok", False):
+        reasons.append("chat answers looked broken")
+    if ev.get("style_routing") is not None and ev["style_routing"] < 0.85:
+        reasons.append(f"mistook your normal talk for commands ({ev['style_routing']:.2f})")
+    if ev.get("memory_chat", 0) < 0.5:
+        reasons.append(f"didn't use what it was told to remember ({ev.get('memory_chat', 0):.2f})")
     if prev:
         pe = prev.get("eval", {})
         if s.get("exact", 0) < (pe.get("synthetic") or {}).get("exact", 0) - MAX_DROP:
@@ -166,7 +189,24 @@ def gate(ev, prev):
         y, py = ev.get("yours"), pe.get("yours")
         if y and py and y.get("n", 0) >= 10 and y.get("exact", 0) < py.get("exact", 0) - MAX_DROP:
             reasons.append("worse than the current brain on your own commands")
+        if ev.get("memory_chat", 0) < pe.get("memory_chat", 0) - 0.25:
+            reasons.append("worse than the current brain at using memory")
     return reasons
+
+
+KEEP = ("synthetic", "yours", "style_routing", "memory_commands", "memory_chat", "chat_samples", "chat_ok",
+        "gguf_smoke", "train_rows", "your_interactions", "base_model", "llama_cpp", "loss_last")
+
+
+def summarise(ev):
+    """eval.json -> what goes in the release manifest (drops the long lists of misses)."""
+    out = {}
+    for k in KEEP:
+        v = ev.get(k)
+        if isinstance(v, dict) and "exact" in v:
+            v = {x: v[x] for x in ("n", "valid", "action", "exact", "per_action") if x in v}
+        out[k] = v
+    return out
 
 
 def sha256(path):
@@ -185,18 +225,21 @@ def collect():
     st = kernel_status()
     print("Kaggle status:", st)
     if st in ("running", "queued", "unknown"):
+        save_log()
         if time.time() - p["started_ts"] > 16 * 3600:
             p.update(status="failed", reason="timed out", ended=now())
             save_pending(p); log_history(p)
         return
     if st in ("error", "cancel"):
-        p.update(status="failed", reason=f"Kaggle run {st}", ended=now())
+        save_log()
+        p.update(status="failed", reason=f"Kaggle run {st} (see retrain/last_run.log)", ended=now())
         save_pending(p); log_history(p)
         return
 
     out = BUILD / "out"
     shutil.rmtree(out, ignore_errors=True)
     kaggle("kernels", "output", KERNEL, "-p", str(out))
+    save_log()
     gguf = next(iter(glob.glob(str(out / "**" / "topshe_brain.gguf"), recursive=True)), None)
     evf = next(iter(glob.glob(str(out / "**" / "eval.json"), recursive=True)), None)
     tpl = next(iter(glob.glob(str(out / "**" / "prompt_template.json"), recursive=True)), None)
@@ -205,9 +248,14 @@ def collect():
         save_pending(p); log_history(p)
         return
     ev = json.loads(Path(evf).read_text())
+    distill = next(iter(glob.glob(str(out / "**" / "chat_distill.jsonl"), recursive=True)), None)
+    if distill:                                   # keep it for next week (saves ~45 GPU minutes)
+        (DATA / "data").mkdir(parents=True, exist_ok=True)
+        shutil.copy(distill, DATA / "data" / "chat_distill.jsonl")
     prev = previous_manifest()
     reasons = gate(ev, prev)
     summary = {k: (ev.get(k) or {}).get("exact") for k in ("synthetic", "yours")}
+    summary.update({k: ev.get(k) for k in ("style_routing", "memory_chat", "gguf_smoke")})
     if reasons:
         print("Quality gate FAILED:", reasons)
         p.update(status="rejected", reasons=reasons, scores=summary, ended=now())
@@ -232,13 +280,10 @@ def collect():
             i += 1
     manifest = {
         "version": version, "created": now(), "sha256": full_sha, "bytes": os.path.getsize(gguf),
-        "parts": parts, "prompt": json.loads(Path(tpl).read_text()),
-        "eval": {k: ({x: v[x] for x in ("n", "valid", "action", "exact")} if isinstance(v, dict) and "exact" in v else v)
-                 for k, v in ev.items() if k in ("synthetic", "yours", "chat_sample", "general_sample", "train_rows",
-                                                  "your_interactions", "base_model", "llama_cpp")},
+        "parts": parts, "prompt": json.loads(Path(tpl).read_text()), "eval": summarise(ev),
     }
     (rel / "manifest.json").write_text(json.dumps(manifest, indent=1, ensure_ascii=False))
-    notes = (f"Weekly brain v{version}. Test accuracy: {summary['synthetic']:.1%}"
+    notes = (f"Weekly brain v{version}. Command accuracy: {summary['synthetic']:.1%}"
              + (f", your commands: {summary['yours']:.1%}" if summary.get("yours") is not None else "")
              + f". Trained on {ev.get('your_interactions', 0)} of your interactions.")
     run(["gh", "release", "create", f"model-{version}", "-R", REPO, "--title", f"Topshe brain v{version}",

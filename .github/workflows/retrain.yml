@@ -1,11 +1,11 @@
 name: Topshe weekly retrain
 
 # Sunday 01:00 IST: start training on Kaggle with the week's phone data.
-# Every 3 hours on Sunday/Monday (IST): check if training finished; test it; publish if it's better.
+# Every 3 hours: check if training finished; test it; publish only if it's not worse.
 on:
   schedule:
     - cron: "30 19 * * 6"      # start   (Sat 19:30 UTC = Sun 01:00 IST)
-    - cron: "15 */3 * * 0,1"   # collect
+    - cron: "15 */3 * * *"     # collect (exits in seconds when nothing is training)
   workflow_dispatch:
     inputs:
       mode:
@@ -47,7 +47,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install Kaggle CLI
-        run: pip install -q --upgrade kaggle
+        run: pip install -q --upgrade kaggle six   # kaggle imports six but doesn't declare it
 
       - name: Run
         run: |
@@ -56,6 +56,9 @@ jobs:
             if [ "${{ github.event.schedule }}" = "30 19 * * 6" ]; then MODE=start; else MODE=collect; fi
           fi
           echo "Mode: $MODE"
+          # Use whichever Kaggle login was provided; empty ones would confuse the Kaggle tool
+          [ -z "$KAGGLE_API_TOKEN" ] && unset KAGGLE_API_TOKEN
+          [ -z "$KAGGLE_KEY" ] && unset KAGGLE_KEY
           python training/pipeline.py "$MODE"
 
       - name: Save status to the data branch
@@ -64,7 +67,7 @@ jobs:
           cd databranch
           git config user.name "topshe-bot"
           git config user.email "topshe-bot@users.noreply.github.com"
-          git add -A retrain || true
+          git add -A retrain data || true
           if ! git diff --cached --quiet; then
             git commit -m "retrain status $(date -u +%F_%H%M)"
             git pull --rebase origin data || true
