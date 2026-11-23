@@ -231,7 +231,7 @@ object Sync {
         val nm = ctx.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel("topshe_updates", "Topshe updates", NotificationManager.IMPORTANCE_DEFAULT))
         nm.notify(42, android.app.Notification.Builder(ctx, "topshe_updates")
-            .setSmallIcon(R.drawable.ic_stat_topshe)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentTitle("Topshe learned").setContentText(text).setAutoCancel(true).build())
     }
 

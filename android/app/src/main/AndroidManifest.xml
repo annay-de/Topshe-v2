@@ -34,8 +34,7 @@
 
     <application
         android:label="Topshe"
-        android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher"
+        android:icon="@android:drawable/ic_btn_speak_now"
         android:theme="@android:style/Theme.Material.Light">
 
         <activity
@@ -56,7 +55,7 @@
         <service
             android:name=".TopsheTile"
             android:exported="true"
-            android:icon="@drawable/ic_stat_topshe"
+            android:icon="@android:drawable/ic_btn_speak_now"
             android:label="Topshe"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>

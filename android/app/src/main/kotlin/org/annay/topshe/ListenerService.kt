@@ -270,7 +270,7 @@ class ListenerService : Service() {
             Notification.Action.Builder(null, "Resume", actionIntent(ACTION_START, 1)).build()
         else Notification.Action.Builder(null, "Pause", actionIntent(ACTION_PAUSE, 2)).build()
         val n = Notification.Builder(this, CHANNEL)
-            .setSmallIcon(R.drawable.ic_stat_topshe)
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle("Topshe")
             .setContentText(text)
             .setContentIntent(open)

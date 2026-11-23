@@ -15,7 +15,7 @@ class ReminderReceiver : BroadcastReceiver() {
         nm.createNotificationChannel(NotificationChannel("topshe_reminders", "Reminders", NotificationManager.IMPORTANCE_HIGH))
         nm.notify((System.currentTimeMillis() % Int.MAX_VALUE).toInt(),
             Notification.Builder(ctx, "topshe_reminders")
-                .setSmallIcon(R.drawable.ic_stat_topshe)
+                .setSmallIcon(android.R.drawable.ic_popup_reminder)
                 .setContentTitle("Topshe reminder")
                 .setContentText(text.replaceFirstChar { it.uppercase() })
                 .setAutoCancel(true)
