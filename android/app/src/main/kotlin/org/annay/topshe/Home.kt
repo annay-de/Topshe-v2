@@ -266,6 +266,7 @@ class MemoryScreen(private val act: Activity, private val k: Kit) {
         }
         val p = Prefs(act)
         info.text = "Brain: " + (if (p.brainVersion > 0) "v${p.brainVersion}" else if (Store.model(act).exists()) "older v2" else "none yet") +
+            (if (p.chatVersion > 0 && Store.chatBrain(act).exists()) " + chat v${p.chatVersion}" else "") +
             "  ·  learned from ${memory.interactionCount()} requests so far"
     }
 }

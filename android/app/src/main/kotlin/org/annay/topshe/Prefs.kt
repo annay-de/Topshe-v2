@@ -44,6 +44,10 @@ class Prefs(ctx: Context) {
     var brainVersion: Int
         get() = sp.getInt("brainVersion", 0)
         set(v) = sp.edit().putInt("brainVersion", v).apply()
+    /** The chat brain (answers questions), separate from the command brain since Nov 2026. */
+    var chatVersion: Int
+        get() = sp.getInt("chatVersion", 0)
+        set(v) = sp.edit().putInt("chatVersion", v).apply()
 
     /** Chat screen: speak Topshe's replies out loud too (off = text only). */
     var speakTyped: Boolean
@@ -81,8 +85,10 @@ class Prefs(ctx: Context) {
 
 /** Where Topshe keeps its files (all inside the app's private storage). */
 object Store {
-    fun brain(ctx: Context) = File(ctx.filesDir, "topshe_brain.gguf")              // weekly brain (Qwen 3.5 4B)
+    fun brain(ctx: Context) = File(ctx.filesDir, "topshe_brain.gguf")              // command brain (weekly; Qwen 3.5 0.8B)
     fun promptTemplate(ctx: Context) = File(ctx.filesDir, "prompt_template.json")
+    fun chatBrain(ctx: Context) = File(ctx.filesDir, "topshe_chat.gguf")           // chat brain (Qwen 3.5 2B)
+    fun chatTemplate(ctx: Context) = File(ctx.filesDir, "chat_template.json")
     fun model(ctx: Context) = File(ctx.filesDir, "topshe.gguf")                    // older v2 model (fallback)
     fun sttModel(ctx: Context) = File(ctx.filesDir, "whisper")
     fun bnModel(ctx: Context) = File(ctx.filesDir, "bn_asr")                     // Bengali speech-to-text

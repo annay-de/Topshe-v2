@@ -14,7 +14,9 @@ object NativeLlama {
 }
 
 /**
- * Topshe's brain: one model (Qwen 3.5 4B, retrained weekly on your usage) for both commands and chat.
+ * Topshe's brains: the command brain (Qwen 3.5 0.8B, retrained weekly on your usage) turns every
+ * request into an action, quickly; the chat brain (Qwen 3.5 2B) answers questions and small talk.
+ * Without a chat brain on the phone, the command brain answers chat too.
  * Everything Topshe knows about you (Memory facts) is added to every prompt.
  *
  * The prompt format comes from prompt_template.json, written by the trainer together with the model,
@@ -40,6 +42,10 @@ object Brain {
         "<|im_start|>system\n{SYSTEM}<|im_end|>\n<|im_start|>user\n{USER}<|im_end|>\n<|im_start|>assistant\n"
 
     @Volatile private var handle = 0L
+    @Volatile private var chatHandle = 0L
+    private var chatTpl = CHATML
+    private var chatFailed = false
+    private var appCtx: Context? = null
     @Volatile var legacy = false
         private set
     @Volatile var loadedName = ""
@@ -57,7 +63,7 @@ object Brain {
 
     /** Ends the current answer right away (kill switch, Stop button). Never blocks. */
     fun stopNow() {
-        if (handle == 0L) return
+        if (handle == 0L && chatHandle == 0L) return
         wasStopped = true
         runCatching { NativeLlama.abort() }
     }
@@ -86,15 +92,36 @@ object Brain {
             JSONObject(Store.promptTemplate(ctx).readText()).optString("hearing") == "dual-v1"
         }.getOrDefault(false)
         threads = Prefs(ctx).threads
+        appCtx = ctx.applicationContext
+        chatFailed = false
         handle = NativeLlama.load(file.absolutePath)
-        loadedName = if (legacy) "v2 (1.5B, older)" else "v${Prefs(ctx).brainVersion}"
+        loadedName = if (legacy) "v2 (1.5B, older)" else "v${Prefs(ctx).brainVersion}" +
+            (if (Store.chatBrain(ctx).exists()) " + chat v${Prefs(ctx).chatVersion}" else "")
         return handle != 0L
     }
+
+    /** The chat brain, loaded the first time a question comes (null: use the command brain). */
+    @Synchronized
+    private fun chatEngine(): Long {
+        if (chatHandle != 0L || chatFailed || legacy) return chatHandle
+        val ctx = appCtx ?: return 0L
+        val f = Store.chatBrain(ctx)
+        if (!f.exists()) return 0L
+        chatTpl = runCatching { JSONObject(Store.chatTemplate(ctx).readText()).getString("template") }
+            .getOrDefault("$CHATML<think>\n\n</think>\n\n")
+        chatHandle = NativeLlama.load(f.absolutePath)
+        chatFailed = chatHandle == 0L
+        return chatHandle
+    }
+
+    val hasChatBrain get() = chatHandle != 0L || appCtx?.let { Store.chatBrain(it).exists() } == true
 
     @Synchronized
     fun unload() {
         if (handle != 0L) NativeLlama.unload(handle)
+        if (chatHandle != 0L) NativeLlama.unload(chatHandle)
         handle = 0L
+        chatHandle = 0L
     }
 
     private fun readTemplate(ctx: Context): String = runCatching {
@@ -108,17 +135,18 @@ object Brain {
     /** Splits the template at {USER}: the part before is cached, only the rest is new each time.
      *  Synchronized with load/unload: the chat screen and the listener can't free it mid-answer. */
     @Synchronized
-    private fun run(system: String, user: String, maxTokens: Int, temp: Float): String {
-        val h = handle
+    private fun run(system: String, user: String, maxTokens: Int, temp: Float, chat: Boolean = false): String {
+        val ch = if (chat) chatEngine() else 0L
+        val h = if (ch != 0L) ch else handle
         if (h == 0L) return ""
         wasStopped = false
-        val full = template.replace("{SYSTEM}", system)
+        val full = (if (ch != 0L) chatTpl else template).replace("{SYSTEM}", system)
         val cut = full.indexOf("{USER}")
         val prefix = full.substring(0, cut)
         val suffix = user + full.substring(cut + "{USER}".length)
         val out = String(NativeLlama.generate(h, prefix, suffix, maxTokens, temp, threads), Charsets.UTF_8)
             .replace(Regex("(?s)<think>.*?</think>"), "").trim()
-        lastStats = runCatching { NativeLlama.stats() }.getOrDefault("")
+        lastStats = (if (ch != 0L) "chat " else "") + runCatching { NativeLlama.stats() }.getOrDefault("")
         android.util.Log.i("Topshe", lastStats)
         return out
     }
@@ -126,6 +154,7 @@ object Brain {
     /** Processes the fixed instructions once in advance, so the first real request is quicker. */
     fun warmUp(facts: List<String>) {
         run(withFacts(if (legacy) LEGACY_CMD_SYSTEM else CMD_SYSTEM, facts), "hi", 1, 0f)
+        if (!wasStopped && hasChatBrain) run(withFacts(CHAT_SYSTEM, facts), "hi", 1, 0f, chat = true)
     }
 
     /** Your words -> one action (JSON), or null if the reply wasn't readable. */
@@ -133,7 +162,7 @@ object Brain {
         parseJson(run(withFacts(if (legacy) LEGACY_CMD_SYSTEM else CMD_SYSTEM, facts), text, 96, 0f))
 
     fun chat(question: String, facts: List<String>): String =
-        run(withFacts(CHAT_SYSTEM, facts), question, 120, 0.6f)
+        run(withFacts(CHAT_SYSTEM, facts), question, 120, 0.6f, chat = true)
             .ifBlank { "Sorry, I don't have an answer for that." }
 
     /** Lenient: finds the first balanced {...} in the output. */
@@ -170,8 +199,14 @@ object Brain {
         val best = results.minBy { it.second }
         threads = best.first
         Prefs(ctx).threads = best.first
+        var chatLine = ""
+        if (hasChatBrain) {
+            val s = System.currentTimeMillis()
+            chat("what is a good name for a cat?", facts)
+            chatLine = "\nChat brain: %.1fs - $lastStats".format((System.currentTimeMillis() - s) / 1000.0)
+        }
         return "Brain $loadedName (load %.1fs)\nWarm-up: %s\n".format(loadS, warm) +
             results.joinToString("\n") { (t, ms, st) -> "$t threads: %.1fs - $st".format(ms / 1000.0) } +
-            "\nUsing ${best.first} threads."
+            "\nUsing ${best.first} threads.$chatLine"
     }
 }

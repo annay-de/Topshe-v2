@@ -177,12 +177,12 @@ class MainActivity : Activity() {
             Sync.schedule(this)
             background("Syncing...") { Sync.runSync(this) { setStatus(it) } }
         })
-        brainStatus = k.text(prefs.brainDl.ifBlank { if (prefs.brainVersion > 0) "Brain v${prefs.brainVersion} installed." else "No brain downloaded yet." },
+        brainStatus = k.text(prefs.brainDl.ifBlank { if (prefs.brainVersion > 0) "Brain v${prefs.brainVersion} installed" + (if (prefs.chatVersion > 0) " + chat brain v${prefs.chatVersion}." else ".") else "No brain downloaded yet." },
             13f, Look.TEXT).apply { setPadding(0, k.dp(10), 0, 0) }
         c5.addView(brainStatus)
         brainBar = k.bar(); c5.addView(brainBar)
         c5.addView(k.text("The brain downloads in the background with a notification: you can leave Topshe or turn the screen off. If the connection drops it continues where it stopped.", 13f).apply { setPadding(0, k.dp(6), 0, 0) })
-        c5.addView(k.button("Go back one brain (re-downloads 2.7 GB, use Wi-Fi)") {
+        c5.addView(k.button("Go back one brain (re-downloads it, use Wi-Fi)") {
             DownloadWorker.brain(this, rollback = true)
             brainStatus.text = prefs.brainDl
         })
@@ -381,7 +381,7 @@ class MainActivity : Activity() {
                 val v = prefs.voiceDl
                 if (v.isNotBlank() && v != lastVoice) { lastVoice = v; dlStatus.text = v; kit.showProgress(voiceBar, v); if (v.startsWith("Voice models ready")) refresh() }
                 val b = prefs.brainDl
-                if (b.isNotBlank() && b != lastBrain) { lastBrain = b; brainStatus.text = b; kit.showProgress(brainBar, b); if (b.startsWith("Brain v")) refresh() }
+                if (b.isNotBlank() && b != lastBrain) { lastBrain = b; brainStatus.text = b; kit.showProgress(brainBar, b); if (b.startsWith("Brain v") || b.startsWith("Chat brain v")) refresh() }
                 home?.tick()
                 home?.refresh(Store.missing(this@MainActivity), ListenerService.state)
             }

@@ -21,7 +21,7 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
 /**
- * Big downloads (the 2.7 GB brain, the voice models) as a foreground job with its own notification:
+ * Big downloads (the brains, the voice models) as a foreground job with its own notification:
  * Android keeps it running with the screen off, while you use other apps, and through Realme's
  * battery saver. Tapping buttons in Topshe doesn't touch it, a second tap doesn't start a second
  * copy, and if the network drops it pauses and later resumes where it stopped (not from zero).
@@ -69,7 +69,8 @@ class DownloadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
                 if (isBrain) {
                     val target = inputData.getInt("target", -1)
                     if (inputData.getBoolean("rollback", false)) Sync.rollback(ctx) { report(it) }
-                    else Sync.updateBrain(ctx, target.takeIf { it >= 0 }) { report(it) }
+                    else if (target >= 0) Sync.updateBrain(ctx, target) { report(it) }
+                    else Sync.updateBrains(ctx) { report(it) }
                 } else {
                     VoiceModels.downloadAll(ctx) { report(it) }
                     "Voice models ready."
