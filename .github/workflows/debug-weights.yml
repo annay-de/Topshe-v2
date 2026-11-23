@@ -1,0 +1,121 @@
+name: Debug brain weights
+
+# Checks whether the training actually reached the phone file:
+#  1. compares a few phone-file weights with the base model and the saved training delta (LoRA)
+#  2. runs the smoke prompts again with llama.cpp applying the saved LoRA on top of the phone file
+on:
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Download the trained brain from Kaggle
+        run: |
+          [ -z "$KAGGLE_API_TOKEN" ] && unset KAGGLE_API_TOKEN
+          [ -z "$KAGGLE_KEY" ] && unset KAGGLE_KEY
+          pip install -q kaggle six
+          U=$(echo "$KAGGLE_USERNAME" | tr 'A-Z' 'a-z')
+          kaggle kernels output "$U/topshe-trainer" -p out
+          ls -la out out/lora
+          cat out/lora/adapter_config.json
+      - name: Get llama.cpp and Python tools
+        run: |
+          git clone -q --depth 1 --branch b12602 https://github.com/ggml-org/llama.cpp lc
+          pip install -q --index-url https://download.pytorch.org/whl/cpu torch
+          pip install -q safetensors huggingface_hub numpy sentencepiece
+          pip install -q ./lc/gguf-py
+      - name: Weight check (is the training inside the phone file?)
+        run: |
+          python - <<'EOF'
+          import json, re, numpy as np, torch
+          from safetensors import safe_open
+          from huggingface_hub import hf_hub_download
+          import gguf
+          from gguf.quants import dequantize
+
+          cfg = json.load(open("out/lora/adapter_config.json"))
+          r, alpha = cfg["r"], cfg["lora_alpha"]
+          scale = alpha / (r ** 0.5) if cfg.get("use_rslora") else alpha / r
+          print("r", r, "alpha", alpha, "scale", scale)
+
+          ad = {}
+          with safe_open("out/lora/adapter_model.safetensors", "pt") as f:
+              keys = list(f.keys())
+              print("adapter tensors:", len(keys))
+              for k in keys[:6]: print("  ", k)
+              for k in keys: ad[k] = f.get_tensor(k).float()
+          nz = sum(1 for k in keys if "lora_B" in k and ad[k].abs().max() > 0)
+          print("lora_B tensors that are non-zero:", nz, "of", sum("lora_B" in k for k in keys))
+
+          idx = json.load(open(hf_hub_download("unsloth/Qwen3.5-4B", "model.safetensors.index.json")))["weight_map"]
+          rd = gguf.GGUFReader("out/topshe_brain.gguf")
+          gt = {t.name: t for t in rd.tensors}
+
+          def module(layer, part):
+              for k in keys:
+                  if re.search(rf"layers\.{layer}\.{re.escape(part)}\.lora_A", k):
+                      return k[: k.index(".lora_A")]
+          checks = [(3, "mlp.down_proj", "blk.3.ffn_down.weight"), (3, "mlp.gate_proj", "blk.3.ffn_gate.weight"),
+                    (17, "mlp.up_proj", "blk.17.ffn_up.weight"), (30, "mlp.down_proj", "blk.30.ffn_down.weight")]
+          shards = {}
+          for layer, part, gname in checks:
+              m = module(layer, part)
+              if m is None:
+                  print("no adapter for", layer, part); continue
+              A = ad[[k for k in keys if k.startswith(m + ".lora_A")][0]]
+              B = ad[[k for k in keys if k.startswith(m + ".lora_B")][0]]
+              delta = (B @ A) * scale
+              bkey = [k for k in idx if k.endswith(f"layers.{layer}.{part}.weight") and "visual" not in k][0]
+              sh = idx[bkey]
+              if sh not in shards: shards[sh] = hf_hub_download("unsloth/Qwen3.5-4B", sh)
+              with safe_open(shards[sh], "pt") as f: W = f.get_tensor(bkey).float()
+              if gname not in gt:
+                  print("phone file has no", gname); continue
+              t = gt[gname]
+              G = torch.from_numpy(np.array(dequantize(t.data, t.tensor_type), dtype=np.float32)).reshape(W.shape)
+              res = G - W
+              cos = torch.nn.functional.cosine_similarity(res.flatten(), delta.flatten(), dim=0).item()
+              print(f"{gname:24} {t.tensor_type.name:5} |W|={W.norm():.2f} |delta|={delta.norm():.4f} "
+                    f"|G-W|={res.norm():.4f} |G-(W+delta)|={(res - delta).norm():.4f} cos(G-W, delta)={cos:.3f}")
+          print("Reading: cos near 0 and |G-W| < |G-(W+delta)|  => the training is NOT in the phone file")
+          print("         cos clearly > 0 and |G-(W+delta)| < |G-W| => the training IS in the phone file")
+          EOF
+      - name: LoRA path (llama.cpp applies the saved training on top)
+        continue-on-error: true
+        run: |
+          python -m venv cv && cv/bin/pip install -q -r lc/requirements/requirements-convert_hf_to_gguf.txt
+          mkdir -p basecfg
+          python -c "from huggingface_hub import hf_hub_download as d; import shutil; shutil.copy(d('unsloth/Qwen3.5-4B','config.json'),'basecfg/config.json')"
+          cv/bin/python lc/convert_lora_to_gguf.py out/lora --base basecfg --outfile lora.gguf --outtype f16
+          cmake -S lc -B lc/build -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_TESTS=OFF -DLLAMA_CURL=OFF > /dev/null
+          T=llama-completion; ls lc/tools | grep -qx completion || T=llama-cli
+          cmake --build lc/build --target $T -j 4 > /dev/null
+          python - "$T" <<'EOF'
+          import json, subprocess, sys
+          tool = sys.argv[1]
+          tpl = json.load(open("out/prompt_template.json"))
+          T, CMD, CHAT = tpl["template"], tpl["cmd_system"], tpl["chat_system"]
+          tests = [(CMD, "play tum hi ho"), (CMD, "go to sleep"), (CMD, "why is the sky blue"),
+                   (CMD, "wake me up at 6:45 tomorrow"), (CHAT, "who directed pather panchali?")]
+          for sysm, user in tests:
+              p = T.replace("{SYSTEM}", sysm).replace("{USER}", user)
+              cmd = [f"lc/build/bin/{tool}", "-m", "out/topshe_brain.gguf", "--lora", "lora.gguf", "-p", p,
+                     "-n", "80", "--temp", "0", "-no-cnv", "--no-display-prompt", "--no-warmup"]
+              rr = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+              print("=" * 70); print("USER:", user); print("WITH LORA:", repr(rr.stdout[-500:]))
+              if rr.returncode: print("STDERR:", rr.stderr[-1500:])
+          EOF
