@@ -30,6 +30,8 @@ import org.json.JSONObject
  */
 private val CORRECTION = Regex("^(no|nope|nahi|wrong|not that|that's wrong|that is wrong)(?:[,.! ]+((i meant|i said|i want|i wanted)[,: ]*)?(.*))?[.!]?$",
     RegexOption.IGNORE_CASE)
+// The same in Bengali: "না, আমি বলেছিলাম ...", "ভুল, মানে ...", "না না ..."
+private val CORRECTION_BN = Regex("^(না না|না|নাহ|ভুল|উঁহু|ওটা না)(?:[,।! ]+((আমি (বলেছি|বললাম|বলেছিলাম|চেয়েছিলাম|চাইছিলাম)|মানে)[,: ]*)?(.*))?[।!]?$")
 
 class ListenerService : Service() {
 
@@ -138,11 +140,12 @@ class ListenerService : Service() {
             ActivityLog.add(this, "Ignored a wake - voice score ${score?.let { "%.2f".format(it) } ?: "n/a"}")
             return true
         }
-        val heard = e.transcribe(u.speech)
-            .replace(Regex("^(hey |ok )?(top ?sh(e|ay|ey|ae)|topsy|tapshe)[,.!]?\\s*", RegexOption.IGNORE_CASE), "").trim()
-        ActivityLog.add(this, "Heard (voice %.2f): \"%s\"".format(score, heard))
-        if (heard.isBlank()) { speaker.say("Sorry, I didn't catch that."); return true }
-        setState(State.BUSY, "Working: $heard")
+        val h = e.hear(u.speech).withoutWakeWord()
+        val dual = Brain.dualHearing
+        val heard = h.forBrain(dual)                   // what the brain sees (and what it learns from)
+        ActivityLog.add(this, "Heard (voice %.2f): \"%s\"".format(score, h.shown()))
+        if (if (dual) h.isBlank() else h.en.isBlank()) { speaker.say("Sorry, I didn't catch that."); return true }
+        setState(State.BUSY, "Working: ${h.shown()}")
 
         val asker = object : Actions.Asker {
             override suspend fun ask(question: String): String? {
@@ -156,15 +159,22 @@ class ListenerService : Service() {
                 if (s != null && s < prefs.voiceThreshold) {
                     ActivityLog.add(this@ListenerService, "Ignored a reply - not your voice (%.2f)".format(s)); return null
                 }
-                return e.transcribe(reply.speech).also { ActivityLog.add(this@ListenerService, "Reply: \"$it\"") }
+                val r = e.hear(reply.speech)
+                ActivityLog.add(this@ListenerService, "Reply: \"${r.shown()}\"")
+                return r.forBrain(dual)
             }
         }
 
         // 1) "No, I meant ..." within 2 minutes corrects the last action (and is remembered)
-        val correction = CORRECTION.find(heard)
+        val cEn = CORRECTION.find(h.en)
+        val cBn = if (dual) CORRECTION_BN.find(h.bn) else null
         val prev = last
-        if (correction != null && prev != null && System.currentTimeMillis() - prev.at < 120_000) {
-            val fixed = correction.groupValues[4].trim().ifBlank { asker.ask("Okay, what did you mean?") ?: "" }
+        if ((cEn != null || cBn != null) && prev != null && System.currentTimeMillis() - prev.at < 120_000) {
+            val restEn = cEn?.groupValues?.get(4)?.trim()
+            val restBn = cBn?.groupValues?.get(4)?.trim()
+            val said = if (dual) (if (cBn != null) restBn else restEn).orEmpty() else restEn.orEmpty()
+            val fixed = if (said.isBlank()) asker.ask("Okay, what did you mean?") ?: ""
+                        else if (dual) Hearing(restEn ?: h.en, restBn ?: h.bn).forBrain(true) else said
             if (fixed.isBlank()) return true
             val newCmd = musicRuleAsAction(fixed) ?: Brain.command(fixed, memory.facts())
                 ?: run { speaker.say("Sorry, I still didn't get it."); return true }
@@ -180,8 +190,9 @@ class ListenerService : Service() {
         val learned = memory.correctionFor(heard)?.also { ActivityLog.add(this, "Using your earlier correction") }
 
         // 3) Music / media: simple rules, instant
-        if (learned == null && music.handle(heard)) {
-            musicRuleAsAction(heard)?.let { memory.log(heard, it, "ok"); last = Last(heard, it, System.currentTimeMillis()) }
+        //    (English line: "play ..." patterns; Bengali requests go to the brain)
+        if (learned == null && music.handle(h.en)) {
+            musicRuleAsAction(h.en)?.let { memory.log(heard, it, "ok"); last = Last(heard, it, System.currentTimeMillis()) }
             return true
         }
 
@@ -189,7 +200,7 @@ class ListenerService : Service() {
         val cmd = learned ?: Brain.command(heard, memory.facts())
         if (cmd == null) { speaker.say("Sorry, I got confused. Try again?"); memory.log(heard, null, "failed"); return true }
 
-        val r = actions.run(cmd, heard, asker)
+        val r = actions.run(cmd, h.en.ifBlank { h.bn }, asker)
         memory.log(heard, cmd, r.outcome)
         last = if (r.outcome == "ok" || r.outcome == "confirmed") Last(heard, cmd, System.currentTimeMillis()) else null
         return r.keepListening

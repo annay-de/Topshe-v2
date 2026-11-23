@@ -36,6 +36,52 @@ def dumps(obj):
     """Compact JSON (fewer tokens = faster replies on the phone)."""
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
 
+
+# ---- Two hearings (v4) -----------------------------------------------------------------------
+# The phone runs two speech models on every request: Whisper (English) and a Bengali model.
+# The brain sees both and learns which one makes sense. MUST match Hearing.forBrain() in the app.
+HEARING = "dual-v1"
+
+
+def hearing(en, bn):
+    return f"english: {en}\nbangla: {bn}"
+
+
+# What each model makes of the OTHER language (real outputs, from training/eval_asr_bn.py).
+# Replaced by the much larger data/hearing_pool.jsonl when it is available (set_pool()).
+FILLER_BN_FOR_EN = ["উইক মিয়াপ অ্যাডসেক্স ফার্টি ফাইভ টু মরো", "সেট আর টাইমার ফর ট্যাঙ্ক ম্যানেজ", "কল মা",
+                    "রিমান্ড মিটু কল বাবা অ্যাড এইট পিএম", "তপসি প্লেই তুমহী হো অন স্পটে ফাই", "গল মা",
+                    "স্যাটেল টাইম অফ ও ট্যান ম্যানেজ", "রেমাইন মিডু কল বাবা আট এড পিএম", "টপশি প্লে তুমি হো অন স্পোর্টায়",
+                    "উইকমিয়াট সিক্স ফার্টি ফাইভ ড মরো"]
+FILLER_EN_FOR_BN = ["Topo se makifun kor", "Make Akbar Phone Coro", "Baba's message pathhaja ami berikore firbo.",
+                    "Take a small piece of paper and put it on top.", "10 minutes timer Lada", "Sparifate tum hi ho chala",
+                    "Danta Bondhukar", "Poregantachala", "Then go.", "Now let's go to the bar.", "YouTube Call",
+                    "Monerakis Amarjim Shon Deshaktai.", "Or is it single gun?", "5-6 of the stones.",
+                    "Today's Bye-Re-Common Thanda.", "Here we die.", "Nana Onnota", "Acon tube core", "Good morning",
+                    "Shukrobar Pasta Ramirez Kotha Monaco Riedis.", "Ria's WhatsApp link to Amia's Sheet."]
+POOL = []
+
+
+def set_pool(items):
+    """Uses real hearings (data/hearing_pool.jsonl) for training rows and as filler."""
+    global POOL, FILLER_BN_FOR_EN, FILLER_EN_FOR_BN
+    POOL = [it for it in items if it.get("en") is not None and it.get("bn") is not None]
+    bn_for_en = [it["bn"] for it in POOL if it["lang"] == "en" and it["bn"]]
+    en_for_bn = [it["en"] for it in POOL if it["lang"] == "bn" and it["en"]]
+    if len(bn_for_en) > 50:
+        FILLER_BN_FOR_EN = bn_for_en
+    if len(en_for_bn) > 50:
+        FILLER_EN_FOR_BN = en_for_bn
+
+
+def as_heard(text, lang, rnd=random):
+    """A typed/clean request as the brain sees it: 85% both hearings, 15% the old single line."""
+    if rnd.random() < 0.15 and lang == "en":
+        return text
+    if lang == "bn":
+        return hearing(rnd.choice(FILLER_EN_FOR_BN), text)
+    return hearing(text, rnd.choice(FILLER_BN_FOR_EN))
+
 # Add your own apps and contacts here, then re-run
 APPS = ["WhatsApp", "YouTube", "Spotify", "Chrome", "Gmail", "Maps", "Camera", "Instagram",
         "Telegram", "Settings", "Calculator", "Calendar", "Kindle", "Zomato", "Swiggy", "Uber",
@@ -635,7 +681,7 @@ def make_rows(seed=42):
             seen.add(text)
             # 40% of commands see a memory block (the app always sends it when facts exist)
             facts = random_facts() if random.random() < 0.4 else []
-            rows.append(row(with_facts(CMD_SYSTEM, facts), text, dumps(out), "command"))
+            rows.append(row(with_facts(CMD_SYSTEM, facts), as_heard(text, "en"), dumps(out), "command"))
             made += 1
     for gen, n in BN_GENERATORS:
         made = tries = 0
@@ -647,12 +693,12 @@ def make_rows(seed=42):
                 continue
             seen.add(text)
             facts = random_facts() if random.random() < 0.4 else []
-            rows.append(row(with_facts(CMD_SYSTEM, facts), text, dumps(out), "command_bn"))
+            rows.append(row(with_facts(CMD_SYSTEM, facts), as_heard(text, "bn"), dumps(out), "command_bn"))
             made += 1
     for _ in range(15):
         for must, phrasings, out in MEMORY_CMDS:
             for p in phrasings:
-                rows.append(row(with_facts(CMD_SYSTEM, random_facts(5, must)), noisy(p), dumps(out), "memory_command"))
+                rows.append(row(with_facts(CMD_SYSTEM, random_facts(5, must)), as_heard(noisy(p), "en"), dumps(out), "memory_command"))
     for _ in range(10):
         for fact, questions, answer in MEMORY_CHATS:
             for q in questions:
@@ -662,14 +708,28 @@ def make_rows(seed=42):
             for q in qs:
                 rows.append(row(with_facts(CHAT_SYSTEM, random_facts(4) if random.random() < 0.4 else []),
                                 noisy(q), answer, "identity"))
+    for it in POOL:
+        if not pool_held(it):
+            facts = random_facts() if random.random() < 0.4 else []
+            rows.append(row(with_facts(CMD_SYSTEM, facts), hearing(it["en"], it["bn"]), it["assistant"], "heard"))
     random.shuffle(rows)
     return rows
+
+
+def pool_held(it):
+    """Stable 10% of the hearing pool kept out of training, to test on real speech-model output."""
+    import hashlib
+    return int(hashlib.md5(it["text"].encode()).hexdigest(), 16) % 10 == 0
+
+
+def eval_heard_rows():
+    return [row(CMD_SYSTEM, hearing(it["en"], it["bn"]), it["assistant"], "eval_heard") for it in POOL if pool_held(it)]
 
 
 def eval_memory_rows():
     """Held-out memory checks (never trained on)."""
     chats = [row(with_facts(CHAT_SYSTEM, random_facts(4, [f])), q, key, "eval_memory_chat") for f, q, key in EVAL_MEMORY_CHATS]
-    cmds = [row(with_facts(CMD_SYSTEM, random_facts(4, [f])), q, dumps(out), "eval_memory_cmd") for f, q, out in EVAL_MEMORY_CMDS]
+    cmds = [row(with_facts(CMD_SYSTEM, random_facts(4, [f])), as_heard(q, "en"), dumps(out), "eval_memory_cmd") for f, q, out in EVAL_MEMORY_CMDS]
     return chats, cmds
 
 
@@ -701,7 +761,8 @@ def user_rows(interactions, facts, now_ts=None):
         w = {"corrected": 5, "confirmed": 3, "ok": 2}[outcome]
         if now_ts - float(it.get("ts") or 0) < 14 * 86400:
             w *= 1.5
-        r = row(with_facts(CMD_SYSTEM, facts), heard, dumps(action), "user")
+        user = heard if heard.startswith("english: ") else as_heard(heard, "en")
+        r = row(with_facts(CMD_SYSTEM, facts), user, dumps(action), "user")
         r["weight"] = max(1, round(w))
         out.append(r)
     return out
@@ -729,7 +790,7 @@ def style_rows(messages, facts, k=1500, seed=0):
     out = []
     for t in pool[:k]:
         sys_prompt = with_facts(CMD_SYSTEM, facts if rnd.random() < 0.5 else [])
-        out.append(row(sys_prompt, t, dumps({"action": "chat", "query": t}), "style"))
+        out.append(row(sys_prompt, as_heard(t, "en", rnd), dumps({"action": "chat", "query": t}), "style"))
     return out
 
 
@@ -741,7 +802,9 @@ if __name__ == "__main__":
     labels = {}
     for r in rows:
         if r["kind"] in ("command", "command_bn"):
-            labels.setdefault(r["user"], set()).add(r["assistant"])
+            u = r["user"]
+            clean = u.split("\nbangla: ")[-1] if r["kind"] == "command_bn" else u.split("\nbangla: ")[0].removeprefix("english: ")
+            labels.setdefault(clean, set()).add(r["assistant"])
     conflicts = {u: v for u, v in labels.items() if len(v) > 1}
     print("label conflicts:", len(conflicts), list(conflicts.items())[:5])
     for r in [r for r in rows if r["kind"] == "command_bn"][:25]:

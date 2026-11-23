@@ -71,6 +71,7 @@ object Store {
     fun promptTemplate(ctx: Context) = File(ctx.filesDir, "prompt_template.json")
     fun model(ctx: Context) = File(ctx.filesDir, "topshe.gguf")                    // older v2 model (fallback)
     fun sttModel(ctx: Context) = File(ctx.filesDir, "whisper")
+    fun bnModel(ctx: Context) = File(ctx.filesDir, "bn_asr")                     // Bengali speech-to-text
     fun wakeModel(ctx: Context) = File(ctx.filesDir, "kws")
     fun speakerModel(ctx: Context) = File(ctx.filesDir, "speaker.onnx")
     fun voiceProfile(ctx: Context) = File(ctx.filesDir, "voice_profile_v2.bin")
@@ -81,7 +82,8 @@ object Store {
 
     fun voiceModelsReady(ctx: Context) =
         File(wakeModel(ctx), "tokens.txt").exists() && speakerModel(ctx).length() > 1_000_000 &&
-            (sttModel(ctx).listFiles()?.any { it.name.contains("encoder") } == true)
+            (sttModel(ctx).listFiles()?.any { it.name.contains("encoder") } == true) &&
+            File(bnModel(ctx), "tokens.txt").exists()
 
     fun missing(ctx: Context): List<String> = buildList {
         if (!hasBrain(ctx)) add("brain (sync with GitHub, or pick a .gguf)")

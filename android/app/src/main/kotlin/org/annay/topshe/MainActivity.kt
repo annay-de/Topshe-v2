@@ -73,7 +73,7 @@ class MainActivity : Activity() {
     private var metal: MetalBackground? = null
     private lateinit var statusDot: View
 
-    private fun sttLabel() = "Speech language: " + if (prefs.sttLanguage == "en") "English (tap for auto: Hindi/Bengali too)" else "Auto-detect (tap for English only)"
+    private fun sttLabel() = "English speech model: " + if (prefs.sttLanguage == "en") "English only (recommended)" else "auto-detect (tap for English only)"
 
     /** Runs slow work off the screen thread and shows the result. */
     private fun background(start: String, work: () -> String) {
@@ -131,7 +131,7 @@ class MainActivity : Activity() {
         col.addView(c1)
 
         val c2 = k.card("Voice models", "2")
-        c2.addView(k.text("Wake word, voice check and Whisper speech-to-text. Free and open source, about 240 MB to download once (use Wi-Fi)."))
+        c2.addView(k.text("Wake word, voice check, and two speech-to-text models: Whisper for English and a Bengali model (Topshe listens with both). Free and open source, about 330 MB to download once (use Wi-Fi)."))
         c2.addView(k.button("Download voice models") { downloadVoiceModels() })
         dlStatus = k.text(if (Store.voiceModelsReady(this)) "Voice models ready." else "Not downloaded yet.", 13f, Look.TEXT)
             .apply { setPadding(0, k.dp(10), 0, 0) }

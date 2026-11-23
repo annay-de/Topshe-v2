@@ -17,7 +17,7 @@ const val SAMPLE_RATE = 16000
  *  1. A small open-source keyword spotter listens for "Topshe" (the only thing running while idle).
  *  2. After the wake word, records your command until you stop talking.
  *  3. A voice-fingerprint model checks the voice (wake word + command) is yours.
- *  4. Whisper turns the command into text, fully offline.
+ *  4. Whisper (English) and a Bengali model both turn the command into text, fully offline.
  *
  * Fix vs v1: v1 re-ran the wake-word engine on a 3 s window every 0.5 s (6x the work
  * and repeated triggers). Here each audio chunk goes through the spotter exactly once.
@@ -28,6 +28,7 @@ class Ear(ctx: Context, prefs: Prefs) {
     private val speaker = VoiceModels.speakerExtractor(ctx)
     private val profile = VoiceModels.loadProfile(ctx)
     private val stt = VoiceModels.speechRecognizer(ctx, prefs.sttLanguage)
+    private val bnStt = runCatching { VoiceModels.bengaliRecognizer(ctx) }.getOrNull()
 
     private val frame = ShortArray(SAMPLE_RATE / 10)   // 100 ms chunks
     private val preroll = ShortRing(SAMPLE_RATE * 3 / 2)   // last 1.5 s of audio (holds the wake word)
@@ -131,6 +132,31 @@ class Ear(ctx: Context, prefs: Prefs) {
         }
     }
 
+    /** Bengali speech-to-text ("" if the Bengali model isn't there). */
+    fun transcribeBn(pcm: ShortArray): String {
+        val r = bnStt ?: return ""
+        if (pcm.size < SAMPLE_RATE / 4) return ""
+        val s = r.createStream()
+        return try {
+            s.acceptWaveform(VoiceModels.toFloats(pcm), SAMPLE_RATE)
+            s.acceptWaveform(FloatArray(SAMPLE_RATE * 6 / 10), SAMPLE_RATE)   // a little silence flushes the last word
+            s.inputFinished()
+            while (r.isReady(s)) r.decode(s)
+            r.getResult(s).text.trim()
+        } finally {
+            s.release()
+        }
+    }
+
+    /** Both hearings at once (the two models run side by side, about 0.2 s extra). */
+    fun hear(pcm: ShortArray): Hearing {
+        var bn = ""
+        val t = Thread { bn = runCatching { transcribeBn(pcm) }.getOrDefault("") }.apply { start() }
+        val en = transcribe(pcm)
+        t.join()
+        return Hearing(en, bn)
+    }
+
     fun close() {
         rec?.run { runCatching { stop() }; release() }
         rec = null
@@ -142,6 +168,7 @@ class Ear(ctx: Context, prefs: Prefs) {
         runCatching { kws.release() }
         runCatching { speaker.release() }
         runCatching { stt.release() }
+        runCatching { bnStt?.release() }
     }
 
     private fun rms(x: ShortArray): Double {

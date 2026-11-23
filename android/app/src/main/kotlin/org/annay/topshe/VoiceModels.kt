@@ -9,6 +9,8 @@ import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig
 import com.k2fsa.sherpa.onnx.OnlineModelConfig
+import com.k2fsa.sherpa.onnx.OnlineRecognizer
+import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractor
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractorConfig
@@ -27,6 +29,7 @@ import kotlin.math.sqrt
  *  - wake word: a small keyword spotter that listens for any word you type ("TOPSHE")
  *  - voice check: a speaker-embedding model (WeSpeaker ResNet34, trained on VoxCeleb)
  *  - speech-to-text: OpenAI Whisper "base" (multilingual, int8), run offline by sherpa-onnx
+ *  - Bengali speech-to-text: a streaming zipformer trained on Bengali (Vosk), also by sherpa-onnx
  * No account, no key, no time limit.
  */
 object VoiceModels {
@@ -38,6 +41,8 @@ object VoiceModels {
         "wespeaker_en_voxceleb_resnet34_LM.onnx",
         "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx",
     )
+    private const val BN_URL =
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-bn-vosk-2026-02-09.tar.bz2"
     private const val STT_URL =
         "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-base.tar.bz2"
 
@@ -144,7 +149,33 @@ object VoiceModels {
                 }
             }
         }
+        if (!File(Store.bnModel(ctx), "tokens.txt").exists()) {
+            withRetries("Bengali speech model", progress) {
+                untarBz2(BN_URL, Store.bnModel(ctx), "Bengali speech model (4/4)", progress) { name ->
+                    name.endsWith(".onnx") || name == "tokens.txt"
+                }
+            }
+        }
         progress("Voice models ready.")
+    }
+
+    /** Bengali speech-to-text (Vosk zipformer, run by sherpa-onnx), or null if not downloaded. */
+    fun bengaliRecognizer(ctx: Context): OnlineRecognizer? {
+        val dir = Store.bnModel(ctx)
+        if (!File(dir, "tokens.txt").exists()) return null
+        val config = OnlineRecognizerConfig(
+            featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 80),
+            modelConfig = OnlineModelConfig(
+                transducer = OnlineTransducerModelConfig(
+                    encoder = pick(dir, "encoder"), decoder = pick(dir, "decoder"), joiner = pick(dir, "joiner"),
+                ),
+                tokens = File(dir, "tokens.txt").absolutePath,
+                numThreads = 2,
+            ),
+            enableEndpoint = false,
+            decodingMethod = "greedy_search",
+        )
+        return OnlineRecognizer(null, config)
     }
 
     // ---------- wake word ----------

@@ -41,6 +41,8 @@ object Brain {
     @Volatile var legacy = false
         private set
     @Volatile var loadedName = ""
+    /** The loaded brain was trained on both hearings (English + Bengali speech models). */
+    @Volatile var dualHearing = false
         private set
     private var template = CHATML
     @Volatile var threads = 4
@@ -59,6 +61,9 @@ object Brain {
         }
         legacy = file != brain
         template = if (legacy) CHATML else readTemplate(ctx)
+        dualHearing = !legacy && runCatching {
+            JSONObject(Store.promptTemplate(ctx).readText()).optString("hearing") == "dual-v1"
+        }.getOrDefault(false)
         threads = Prefs(ctx).threads
         handle = NativeLlama.load(file.absolutePath)
         loadedName = if (legacy) "v2 (1.5B, older)" else "v${Prefs(ctx).brainVersion}"

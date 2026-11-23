@@ -164,7 +164,13 @@ class Actions(private val ctx: Context, private val speaker: Speaker,
     }
 
     private val numberWords = mapOf("one" to 1, "first" to 1, "ek" to 1, "two" to 2, "second" to 2, "do" to 2,
-        "three" to 3, "third" to 3, "teen" to 3, "four" to 4, "fourth" to 4, "char" to 4, "five" to 5, "fifth" to 5)
+        "three" to 3, "third" to 3, "teen" to 3, "four" to 4, "fourth" to 4, "char" to 4, "five" to 5, "fifth" to 5,
+        "এক" to 1, "একটা" to 1, "প্রথম" to 1, "প্রথমটা" to 1, "১" to 1, "দুই" to 2, "দুটো" to 2, "দ্বিতীয়" to 2,
+        "দ্বিতীয়টা" to 2, "২" to 2, "তিন" to 3, "তৃতীয়" to 3, "তৃতীয়টা" to 3, "৩" to 3, "চার" to 4, "চতুর্থ" to 4,
+        "৪" to 4, "পাঁচ" to 5, "পঞ্চম" to 5, "৫" to 5)
+
+    /** Words of a reply (both hearings), lower-case, punctuation removed. */
+    private fun words(s: String) = s.lowercase().replace(Regex("[,.!?।;:\"]"), " ").split(Regex("\\s+")).filter { it.isNotEmpty() }
 
     /** Picks exactly one person, asking you if there's more than one match. */
     private suspend fun pickPerson(name: String, asker: Asker): Person? {
@@ -177,8 +183,7 @@ class Actions(private val ctx: Context, private val speaker: Speaker,
         val spoken = list.mapIndexed { i, p -> "${i + 1}, ${p.name}" }.joinToString(". ")
         val reply = asker.ask("I found ${people.size} people called $name. $spoken. Which one?")?.lowercase()
             ?: run { speaker.say("Cancelled."); outcome = "cancelled"; return null }
-        val words = reply.split(Regex("\\s+"))
-        val idx = words.firstNotNullOfOrNull { w -> w.toIntOrNull() ?: numberWords[w] }
+        val idx = words(reply).firstNotNullOfOrNull { w -> w.toIntOrNull() ?: numberWords[w] }
         val chosen = idx?.let { list.getOrNull(it - 1) }
             ?: list.firstOrNull { p -> p.name.lowercase().split(" ").drop(1).any { it.isNotEmpty() && reply.contains(it) } }
         if (chosen == null) { speaker.say("I didn't get which one, so I've cancelled it."); outcome = "cancelled" }
@@ -186,10 +191,13 @@ class Actions(private val ctx: Context, private val speaker: Speaker,
         return chosen
     }
 
+    /** Yes only if a yes-word was heard and no no-word (in either hearing): when in doubt, don't call or send. */
     private fun isYes(s: String?): Boolean {
-        val w = s?.lowercase()?.split(Regex("\\s+")) ?: return false
-        val yes = setOf("yes", "yeah", "yep", "yup", "haan", "han", "ha", "ok", "okay", "sure", "correct", "ji", "go", "do")
-        val no = setOf("no", "nope", "nahi", "na", "cancel", "stop", "don't", "dont", "wait")
+        val w = words(s ?: return false)
+        val yes = setOf("yes", "yeah", "yep", "yup", "haan", "han", "ha", "ok", "okay", "sure", "correct", "ji", "go", "do",
+            "হ্যাঁ", "হ্যা", "হাঁ", "হুম", "ঠিক", "অবশ্যই", "কর", "করো", "পাঠা", "পাঠাও", "দে", "দাও", "ইয়েস", "ওকে", "ওইটাই")
+        val no = setOf("no", "nope", "nahi", "na", "cancel", "stop", "don't", "dont", "wait",
+            "না", "নাহ", "থাক", "বাতিল", "ক্যানসেল", "দাঁড়া", "দাঁড়াও", "নো", "উঁহু", "ভুল")
         return w.any { it in yes } && w.none { it in no }
     }
 

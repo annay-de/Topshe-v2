@@ -37,6 +37,20 @@ SMOKE_CMD = [("wake me up at 6:45 tomorrow", "set_alarm"), ("play tum hi ho", "m
              ("remind me to call baba at 8 pm", "set_reminder"), ("open spotify", "open_app"),
              ("pause the music", "media"), ("text riya that i'm running late", "message")]
 SMOKE_CHAT = [("who directed pather panchali?", "ray")]
+# Two-hearing brains: real outputs of the phone's two speech models (Whisper English | Bengali zipformer)
+SMOKE_DUAL = [("Wake me up at 6.45 tomorrow.", "উইক মিয়াপ অ্যাডসেক্স ফার্টি ফাইভ টু মরো", "set_alarm"),
+              ("Set a timer for 10 minutes.", "সেট আর টাইমার ফর ট্যাঙ্ক ম্যানেজ", "set_timer"),
+              ("Remind me to call Baba at 8 p.m.", "রিমান্ড মিটু কল বাবা অ্যাড এইট পিএম", "set_reminder"),
+              ("Play Tung Hee Ho on Spotify.", "প্লেই তুমহী হো অন স্পটে ফাই", "media"),
+              ("go to sleep", "গো টু স্লিপ", "stop"),
+              ("why is the sky blue", "হোয়াই ইজ দ্য স্কাই ব্লু", "chat"),
+              ("Ganta Bondhukar", "গানটা বন্ধ কর", "media"),
+              ("Poregantachala", "পরের গানটা চালা", "media"),
+              ("Topo se makifun kor", "টপসে মাকে ফোন কর", "call"),
+              ("10 minutes timer Lada", "দশ মিনিটের টাইমার লাগা", "set_timer"),
+              ("Acon tube core", "এখন চুপ কর", "stop"),
+              ("Today's Bye-Re-Common Thanda.", "আজকে বাইরে কেমন ঠান্ডা", "chat")]
+SMOKE_LEGACY = [("call maa", "call"), ("play tum hi ho", "media"), ("open spotify", "open_app")]
 
 
 def sh(cmd, **kw):
@@ -251,7 +265,11 @@ def first_json(text):
 def smoke(simple, gguf_path, tpl):
     T, CMD, CHAT = tpl["template"], tpl["cmd_system"], tpl["chat_system"]
     results, ok = [], 0
-    tests = [(False, u, w) for u, w in SMOKE_CMD] + [(True, u, w) for u, w in SMOKE_CHAT]
+    if tpl.get("hearing") == "dual-v1":     # same format as make_dataset_v4.hearing() and the app
+        tests = [(False, f"english: {en}\nbangla: {bn}", w) for en, bn, w in SMOKE_DUAL]
+        tests += [(False, u, w) for u, w in SMOKE_LEGACY] + [(True, u, w) for u, w in SMOKE_CHAT]
+    else:
+        tests = [(False, u, w) for u, w in SMOKE_CMD] + [(True, u, w) for u, w in SMOKE_CHAT]
     for is_chat, user, want in tests:
         p = T.replace("{SYSTEM}", CHAT if is_chat else CMD).replace("{USER}", user)
         r = subprocess.run([simple, "-m", gguf_path, "-n", "120", p], capture_output=True, text=True, timeout=900)

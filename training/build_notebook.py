@@ -87,6 +87,10 @@ print(f"interactions {len(interactions)} | facts {len(facts)} | past messages {l
 
 code("""# 5. Build the dataset (with automatic re-weighting)
 seed = int(time.time()) % 100000
+pool_file = find("hearing_pool.jsonl")                 # real hearings by both phone speech models
+if pool_file:
+    set_pool([json.loads(l) for l in open(pool_file, encoding="utf-8") if l.strip()])
+print("hearing pool:", len(POOL), "items")
 synthetic = make_rows(seed=seed)                      # fresh phrasings every week
 eval_synth = [r for r in synthetic if r["kind"] == "command"][:200]
 eval_bn = [r for r in synthetic if r["kind"] == "command_bn"][:150]      # Bengali / Banglish test set
@@ -122,6 +126,7 @@ eval_style, style = style[:100], style[100:]
 train += style
 
 eval_mem_chat, eval_mem_cmd = eval_memory_rows()
+eval_heard = eval_heard_rows()                        # held-back real hearings (never trained on)
 print("synthetic", len(synthetic), "| re-weighted extra", len(extra), "| yours", len(mine),
       "| style", len(style), "| eval: synth", len(eval_synth), "bengali", len(eval_bn), "yours", len(eval_user),
       "style", len(eval_style))
@@ -161,7 +166,7 @@ def render_prompt(system, user):
 TEMPLATE = render_prompt("{SYSTEM}", "{USER}")
 assert TEMPLATE.count("{SYSTEM}") == 1 and TEMPLATE.count("{USER}") == 1, TEMPLATE
 END = "<|im_end|>" if "<|im_end|>" in TEMPLATE else (tok.eos_token or "")
-json.dump({"template": TEMPLATE, "end": END, "base_model": BASE_MODEL,
+json.dump({"template": TEMPLATE, "end": END, "base_model": BASE_MODEL, "hearing": HEARING,
            "cmd_system": CMD_SYSTEM, "chat_system": CHAT_SYSTEM, "facts_header": FACTS_HEADER},
           open(f"{OUT}/prompt_template.json", "w"), ensure_ascii=False, indent=1)
 print(repr(TEMPLATE))
@@ -297,6 +302,7 @@ def score(rows):
 
 ev = {"synthetic": score(eval_synth)}
 ev["bengali"] = score(eval_bn) if eval_bn else None
+ev["heard"] = score(eval_heard) if eval_heard else None
 ev["yours"] = score(eval_user) if eval_user else None
 ev["style_routing"] = score(eval_style)["action"] if eval_style else None      # your normal talk -> chat
 ev["memory_commands"] = score(eval_mem_cmd)["exact"]

@@ -13,6 +13,8 @@ jobs:
   emulator:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: write
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -37,12 +39,14 @@ jobs:
           api-level: 34
           arch: x86_64
           target: google_apis
+          profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: bash .github/scripts/emulator_download_test.sh
-      - name: Keep the screenshots
+      - name: Keep the screenshots (release "emulator-screens", replaced each run)
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: screenshots
-          path: "*.png"
+        run: |
+          ls *.png || exit 0
+          gh release view emulator-screens -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create emulator-screens -R "$GITHUB_REPOSITORY" --prerelease --title "Emulator screenshots" --notes "Latest app test screenshots"
+          gh release upload emulator-screens -R "$GITHUB_REPOSITORY" --clobber *.png

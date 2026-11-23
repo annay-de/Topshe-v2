@@ -40,6 +40,7 @@ MIN_EXACT = 0.90            # share of held-back commands fully right
 MAX_DROP = 0.02             # allowed drop vs the current brain (noise margin)
 MIN_SMOKE = 0.85            # share of phone-file test commands right
 MIN_BENGALI = 0.85          # share of held-back Bengali / Banglish commands fully right
+MIN_HEARD = 0.70            # share of real two-model hearings (held-back pool) fully right
 
 
 def now():
@@ -102,6 +103,9 @@ def start():
     distill = DATA / "data" / "chat_distill.jsonl"          # general chat made once by the base model
     if distill.exists():
         shutil.copy(distill, ds / "chat_distill.jsonl")
+    pool = DATA / "data" / "hearing_pool.jsonl"              # what both phone speech models really hear
+    if pool.exists():
+        shutil.copy(pool, ds / "hearing_pool.jsonl")
     prev = previous_manifest()                                # last week's scores -> automatic re-weighting
     if prev and prev.get("eval"):
         (ds / "prev_eval.json").write_text(json.dumps(prev["eval"]))
@@ -188,6 +192,9 @@ def gate(ev, prev):
         reasons.append("chat answers looked broken")
     if ev.get("style_routing") is not None and ev["style_routing"] < 0.85:
         reasons.append(f"mistook your normal talk for commands ({ev['style_routing']:.2f})")
+    hd = ev.get("heard") or {}
+    if hd and hd.get("exact", 0) < MIN_HEARD:
+        reasons.append(f"accuracy on real speech-model hearings {hd.get('exact', 0):.2f} < {MIN_HEARD}")
     bn = ev.get("bengali") or {}
     if bn and bn.get("exact", 0) < MIN_BENGALI:
         reasons.append(f"Bengali command accuracy {bn.get('exact', 0):.2f} < {MIN_BENGALI}")
@@ -205,7 +212,7 @@ def gate(ev, prev):
     return reasons
 
 
-KEEP = ("synthetic", "bengali", "yours", "style_routing", "memory_commands", "memory_chat", "chat_samples", "chat_ok",
+KEEP = ("synthetic", "bengali", "heard", "yours", "style_routing", "memory_commands", "memory_chat", "chat_samples", "chat_ok",
         "gguf_smoke", "weight_check", "train_rows", "your_interactions", "base_model", "llama_cpp", "quant",
         "loss_last")
 
@@ -289,7 +296,7 @@ def finish(p):
     prev = previous_manifest()
 
     def scores():
-        sm = {k: (ev.get(k) or {}).get("exact") for k in ("synthetic", "bengali", "yours")}
+        sm = {k: (ev.get(k) or {}).get("exact") for k in ("synthetic", "bengali", "heard", "yours")}
         sm.update({k: ev.get(k) for k in ("style_routing", "memory_chat", "gguf_smoke", "weight_check")})
         return sm
 
