@@ -30,7 +30,7 @@ object Look {
     const val TEXT = 0xFFF4F4F5.toInt()          // main text
     const val MUTED = 0xFFA1A1AA.toInt()         // secondary text
     const val FAINT = 0xFF71717A.toInt()         // log text
-    const val GLASS = 0x14FFFFFF                 // card fill (8% white)
+    const val GLASS = 0xA60B0B0F.toInt()         // card fill: dark glass (65%), keeps text readable
     const val EDGE = 0x24FFFFFF                  // card border
     const val ON = 0xFF4ADE80.toInt()            // listening
     const val PAUSED = 0xFFFBBF24.toInt()        // paused
@@ -86,23 +86,23 @@ float height(float2 p, float t) {
 half4 main(float2 fragCoord) {
     float2 uv = fragCoord / iResolution.y;
     float t = iTime;
-    float2 p = uv * 1.7 + float2(0.0, iScroll * 0.0004);
+    float2 p = uv * 1.05 + float2(0.0, iScroll * 0.0004);
     float2 tp = iTouch.xy / iResolution.y;
     float dist = distance(uv, tp);
     float2 dir = (uv - tp) / max(dist, 0.0001);
     p += dir * iTouch.z * 0.09 * exp(-dist * 3.5) * sin(dist * 22.0 - t * 5.0);
-    float e = 0.012;
+    float e = 0.02;
     float h = height(p, t);
     float hx = height(p + float2(e, 0.0), t);
     float hy = height(p + float2(0.0, e), t);
-    float3 n = normalize(float3((h - hx) / e, (h - hy) / e, 1.1));
+    float3 n = normalize(float3((h - hx) / e, (h - hy) / e, 2.4));
     float3 l = normalize(float3(-0.45, 0.65, 0.65));
     float diff = clamp(dot(n, l), 0.0, 1.0);
     float3 r = reflect(-l, n);
-    float spec = pow(clamp(r.z, 0.0, 1.0), 28.0);
+    float spec = 0.45 * pow(clamp(r.z, 0.0, 1.0), 14.0);
     float fres = pow(1.0 - n.z, 2.0);
     float3 base = mix(float3(0.03, 0.03, 0.037), float3(0.20, 0.21, 0.24), smoothstep(0.30, 0.80, h));
-    float3 col = base * (0.30 + 0.70 * diff) + spec * float3(0.80, 0.84, 0.92) + fres * float3(0.20, 0.24, 0.32);
+    float3 col = base * (0.35 + 0.65 * diff) + spec * float3(0.80, 0.84, 0.92) + fres * float3(0.10, 0.12, 0.16);
     col += 0.035 * float3(sin(h * 11.0 + t * 0.3), sin(h * 11.0 + 2.1 + t * 0.3), sin(h * 11.0 + 4.2 + t * 0.3));
     float2 c = fragCoord / iResolution - 0.5;
     float vig = 1.0 - smoothstep(0.15, 1.05, length(c * float2(1.0, 1.25)));
