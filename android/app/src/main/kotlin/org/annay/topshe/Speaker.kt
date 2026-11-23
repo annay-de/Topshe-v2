@@ -13,15 +13,15 @@ import java.util.concurrent.ConcurrentHashMap
 
 /** Topshe's voice: Android's built-in text-to-speech (Indian English; Bengali for Bengali replies). */
 class Speaker(ctx: Context) : TextToSpeech.OnInitListener {
-    private val ready = CompletableDeferred<Boolean>()
-    private val pending = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
-    private val tts = TextToSpeech(ctx.applicationContext, this)
-    private val tone = runCatching { ToneGenerator(AudioManager.STREAM_NOTIFICATION, 70) }.getOrNull()
-
+    // (declared before the engine starts, which calls onInit)
     private var english: Locale = Locale("en", "IN")
     private val bengali = Locale("bn", "IN")
     private var hasBengali = false
     private var current: Locale? = null
+    private val ready = CompletableDeferred<Boolean>()
+    private val pending = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+    private val tts = TextToSpeech(ctx.applicationContext, this)
+    private val tone = runCatching { ToneGenerator(AudioManager.STREAM_NOTIFICATION, 70) }.getOrNull()
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {

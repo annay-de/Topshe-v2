@@ -70,3 +70,32 @@ These were checked against the real sources (unsloth 2026.11.9, kaggle CLI 2.2.5
   - 12 test prompts with the exact phone prompt (at least 85% right)
   - the gate rejects any file that fails these
 - **Side benefits:** less Kaggle GPU time per week (no conversion there). A finished run can be rebuilt without retraining (`retrain.yml`, mode `reexport`).
+
+## v2.4: Bengali, two hearings, new look, icon from the repo (Nov 2026)
+- **Why two speech models.** In a test with Indian voices (`training/eval_asr_bn.py`), character error (lower is better):
+
+  | Model | Bengali/Banglish | English |
+  |---|---|---|
+  | Whisper base | 1.04 | 0.20 |
+  | Shruti Bengali | 0.26 | 0.23 |
+  | Bengali zipformer | 0.15 | 1.04 |
+
+  Whisper can't do Bengali, and the zipformer can't do English. Whisper's language detection marked only 9 of 16 Indian-English clips as English, so it can't choose between them. So the phone runs **both** Whisper and the zipformer on every request (about 0.2 s extra), and the brain sees both lines and picks the one that makes sense.
+- **Training on real mistakes.** `build_hearing_pool.py` has about 3,000 made-up commands spoken by Indian voices (edge-tts) and transcribed by both models. The brain trains on those real pairs. A fixed 10% is held back as the "heard" test (gate at 70% or more). Only made-up commands are spoken, never Annay's own messages.
+- **Backward compatible.** 15% of rows keep the old single English line, and the app sends both lines only to brains marked `"hearing": "dual-v1"`. So older app builds keep working with new brains, and the new app keeps working with brain v1.
+- **Bengali data** (`make_dataset_v4.py`):
+  - commands in informal, friendly and formal forms (tui, tumi, apni)
+  - Bengali times (সাড়ে, সোয়া, পৌনে, with the part of the day)
+  - names mapped to how contacts are saved, and song names mapped to their usual spelling for Spotify
+  - message, reminder and memory text kept in Bengali
+  - Bengali chat answers distilled once from the base model
+  - gate: at least 85% on held-back Bengali commands
+- **App:**
+  - Bengali yes, no and "which one" replies
+  - Bengali corrections ("না, আমি বলেছিলাম …")
+  - Bengali text-to-speech for Bengali answers
+- **New look:**
+  - a dark liquid-metal shader that reacts to touch (AGSL, Android 13+); it renders at 1/3 resolution and animates only while the screen is visible
+  - glass cards and a metallic wordmark
+- **Icon:** made at build time from `branding/icon.png`. Change that picture in GitHub to change the icon (`branding/README.md`).
+- **Voice-model download:** progress shows under the button, errors stay on screen, and each download retries 3 times. It's verified on an emulator by `test-app.yml`.
