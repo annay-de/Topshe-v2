@@ -1,0 +1,53 @@
+name: Compare brain sizes (speed on an ARM CPU)
+
+# Times the brain sizes on 2 ARM cores with the same llama.cpp build as the phone,
+# to choose the smallest brain that is fast enough. Results: the run's summary page.
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "Runner (ubuntu-24.04-arm = ARM like the phone)"
+        default: ubuntu-24.04-arm
+
+jobs:
+  bench:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 90
+    steps:
+      - name: CPU
+        run: lscpu | head -25; nproc; free -g
+
+      - name: Build llama.cpp b12602 (same as the phone)
+        run: |
+          curl -sL https://github.com/ggml-org/llama.cpp/archive/refs/tags/b12602.tar.gz | tar xz
+          cd llama.cpp-b12602
+          ARCH=""
+          if [ "$(uname -m)" = "aarch64" ]; then ARCH="-DGGML_CPU_ARM_ARCH=armv8.2-a+dotprod+fp16"; fi
+          cmake -B build -DGGML_NATIVE=OFF $ARCH -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+          cmake --build build -j --target llama-bench
+
+      - name: Download brains (Q4_K_M, the phone's format)
+        run: |
+          pip install -q huggingface_hub
+          python - <<'EOF'
+          from huggingface_hub import HfApi, hf_hub_download
+          api = HfApi()
+          for repo in ["unsloth/Qwen3.5-0.8B-GGUF", "unsloth/Qwen3.5-2B-GGUF", "unsloth/Qwen3.5-4B-GGUF",
+                       "unsloth/Qwen3-1.7B-GGUF", "unsloth/Qwen3-0.6B-GGUF"]:
+              try:
+                  f = next(x for x in api.list_repo_files(repo) if x.endswith("Q4_K_M.gguf") and "/" not in x)
+                  p = hf_hub_download(repo, f, local_dir="models")
+                  print(repo, "->", p)
+              except Exception as e:
+                  print("skip", repo, e)
+          EOF
+          ls -la models
+
+      - name: Time each brain on 2 cores
+        run: |
+          B=llama.cpp-b12602/build/bin/llama-bench
+          echo "## Brain speed on 2 cores ($(uname -m))" >> $GITHUB_STEP_SUMMARY
+          echo "pp = reading your words (tokens/s), tg = writing the reply (tokens/s)" >> $GITHUB_STEP_SUMMARY
+          for m in models/*.gguf; do
+            taskset -c 0,1 $B -m "$m" -t 2 -p 48,320 -n 32 -r 2 -o md | tee -a $GITHUB_STEP_SUMMARY
+          done
