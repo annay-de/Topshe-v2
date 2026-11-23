@@ -1,7 +1,18 @@
 {
- "status": "training",
+ "status": "rejected",
  "started": "2026-11-23T08:33:31+00:00",
  "started_ts": 1795422811.2970507,
  "kernel": "annayde/topshe-trainer",
- "interactions": 0
+ "interactions": 0,
+ "reasons": [
+  "the phone file failed its smoke test (0.50)"
+ ],
+ "scores": {
+  "synthetic": 1.0,
+  "yours": null,
+  "style_routing": 0.98,
+  "memory_chat": 1.0,
+  "gguf_smoke": 0.5
+ },
+ "ended": "2026-11-23T12:52:14+00:00"
 }
