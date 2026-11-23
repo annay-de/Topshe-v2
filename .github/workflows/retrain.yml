@@ -1,7 +1,7 @@
 name: Topshe weekly retrain
 
 # Sunday 01:00 IST: start training on Kaggle with the week's phone data.
-# Every 3 hours: check if training finished; test it; publish only if it's not worse.
+# Every 3 hours: check if training finished; build the phone file here, test it; publish only if it's not worse.
 on:
   schedule:
     - cron: "30 19 * * 6"      # start   (Sat 19:30 UTC = Sun 01:00 IST)
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "start or collect"
+        description: "start, collect, or reexport (rebuild the phone file from the last Kaggle run)"
         required: true
         default: start
 
@@ -23,7 +23,7 @@ concurrency:
 jobs:
   retrain:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 180          # building + testing the phone file takes ~1 hour
     env:
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
       KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}

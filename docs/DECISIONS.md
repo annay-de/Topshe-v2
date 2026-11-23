@@ -57,3 +57,16 @@ These were checked against the real sources (unsloth 2026.11.9, kaggle CLI 2.2.5
   - using remembered facts on held-out facts it never trained on (at least 50%)
   - no drop versus the current brain
 - **Fixes:** the Kaggle CLI needs `six`, which it doesn't declare. Empty Kaggle login variables are removed. Kaggle run logs are saved to `retrain/last_run.log`. Collection runs every 3 hours, every day.
+
+## v2.3: the phone file is built on GitHub, and checked weight by weight (Nov 2026)
+- **What went wrong in run 1:** training scored perfectly on Kaggle, but the phone file was the untouched base model. Unsloth's `save_pretrained_merged` (2026.11.9, Qwen 3.5) silently wrote the original weights. The phone file's weights had zero correlation (0.000) with the training.
+- **Fix:** Kaggle now only trains and tests, then saves `lora/` (the training itself, about 130 MB). GitHub Actions builds the phone file with `training/export_brain.py`:
+  1. downloads the original base model
+  2. adds the LoRA to every targeted weight in plain PyTorch (strict name and shape checks; changed weights stored as float16)
+  3. converts to GGUF with llama.cpp b12602, then quantizes to Q4_K_M
+- **Proof the training is inside the file:**
+  - the 16-bit file must hold exactly base + LoRA on sample weights
+  - the 4-bit file must still correlate clearly with the LoRA delta
+  - 12 test prompts with the exact phone prompt (at least 85% right)
+  - the gate rejects any file that fails these
+- **Side benefits:** less Kaggle GPU time per week (no conversion there). A finished run can be rebuilt without retraining (`retrain.yml`, mode `reexport`).

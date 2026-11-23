@@ -8,9 +8,9 @@ The weekly pipeline runs this before pushing to Kaggle; you can also import the
 Verified against the actual sources (Nov 2026):
   - unsloth 2026.11.9: Qwen 3.5 loads through FastModel (it's a vision-language model);
     needs transformers >= 5.2.0; 16-bit LoRA (Unsloth advises against 4-bit for Qwen 3.5)
-  - llama.cpp b12602: converts Qwen3_5ForConditionalGeneration; --no-mtp skips the extra
-    multi-token-prediction head (the phone doesn't use it, and a merged checkpoint may lack it)
-  - its converter pins transformers 4.57.6 / torch CPU, so it runs in its own venv
+  - the phone file is NOT built here any more: GitHub Actions builds it from lora/ with
+    training/export_brain.py and checks the training is really inside it. (Unsloth's
+    save_pretrained_merged wrote untouched base weights for Qwen 3.5 in the first run.)
 """
 import json
 from pathlib import Path
@@ -37,8 +37,8 @@ Used for the first training run **and** every weekly retrain (the GitHub pipelin
 
 - Accelerator: **GPU T4 x2** (one GPU is used). Internet: **On**.
 - If the `topshe-data` dataset is attached: your real usage, corrections, past messages and last week's scores are used.
-- Outputs: `topshe_brain.gguf` (phone model), `prompt_template.json`, `eval.json` (test scores),
-  `chat_distill.jsonl` (reused next week), `lora/` (backup).
+- Outputs: `lora/` (the training), `prompt_template.json`, `eval.json` (test scores),
+  `chat_distill.jsonl` (reused next week). GitHub then builds and tests the phone file from `lora/`.
 """)
 
 code(f"""# 1. Setup (pinned versions)
@@ -294,54 +294,7 @@ print(json.dumps({k: (v if not isinstance(v, dict) or "n" not in v else {x: v[x]
                   for k, v in ev.items()}, indent=1, ensure_ascii=False))
 """)
 
-code("""# 12. Export for the phone: merge -> GGUF (same llama.cpp as the app) -> 4-bit -> smoke test
-model.save_pretrained_merged(f"{TMP}/merged", processor, save_method="merged_16bit")
-del model, trainer; torch.cuda.empty_cache()
-
-LC = f"{TMP}/llama.cpp"
-sh(f"git clone --depth 1 --branch {LLAMA_CPP_TAG} https://github.com/ggml-org/llama.cpp {LC}")
-# The tokenizer isn't changed by training: use the base model's original tokenizer files
-# (the converter's pinned transformers version is tested against those)
-from huggingface_hub import snapshot_download
-tdir = snapshot_download(BASE_MODEL, allow_patterns=["tokenizer*", "vocab*", "merges*", "special_tokens_map.json",
-                                                     "added_tokens.json", "chat_template*"])
-for f in glob.glob(f"{tdir}/*"):
-    shutil.copy(f, f"{TMP}/merged/")
-# The converter pins its own transformers/torch versions: keep them out of this environment
-sh(f"python -m venv {TMP}/cvenv || (pip install -q virtualenv && python -m virtualenv {TMP}/cvenv)")
-sh(f"{TMP}/cvenv/bin/pip install -q -r {LC}/requirements/requirements-convert_hf_to_gguf.txt")
-sh(f"{TMP}/cvenv/bin/python {LC}/convert_hf_to_gguf.py {TMP}/merged --outfile {TMP}/brain-f16.gguf --outtype f16 --no-mtp")
-shutil.rmtree(f"{TMP}/merged", ignore_errors=True)
-sh(f"cmake -S {LC} -B {LC}/build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=OFF -DLLAMA_BUILD_TESTS=OFF "
-   f"-DLLAMA_BUILD_EXAMPLES=ON -DLLAMA_CURL=OFF > /dev/null")
-sh(f"cmake --build {LC}/build --target llama-quantize llama-simple -j 4 > /dev/null")
-sh(f"{LC}/build/bin/llama-quantize {TMP}/brain-f16.gguf {OUT}/topshe_brain.gguf Q4_K_M")
-os.remove(f"{TMP}/brain-f16.gguf")
-
-# Smoke test the exact file the phone will run, with the exact prompt format
-smoke = [("wake me up at 6:45 tomorrow", "set_alarm"), ("play tum hi ho", "media"), ("call maa", "call"),
-         ("remember that my gym is at 7", "remember"), ("go to sleep", "stop"), ("why is the sky blue", "chat")]
-ok = 0
-for text, want in smoke:
-    p = TEMPLATE.replace("{SYSTEM}", CMD_SYSTEM).replace("{USER}", text)
-    r = subprocess.run([f"{LC}/build/bin/llama-simple", "-m", f"{OUT}/topshe_brain.gguf", "-n", "60", p],
-                       capture_output=True, text=True)
-    gen = r.stdout.split("</think>")[-1]
-    try:
-        got = json.loads(gen[gen.index("{"): gen.index("}", gen.index("{")) + 1]).get("action")
-    except Exception:
-        got = None
-    ok += got == want
-    print(f"{text!r:35} -> {got}")
-size = os.path.getsize(f"{OUT}/topshe_brain.gguf")
-sha = hashlib.sha256(open(f"{OUT}/topshe_brain.gguf", "rb").read()).hexdigest()
-ev.update({"gguf_smoke": ok / len(smoke), "gguf_bytes": size, "gguf_sha256": sha, "llama_cpp": LLAMA_CPP_TAG,
-           "minutes_total": round((time.time() - T0) / 60)})
-json.dump(ev, open(f"{OUT}/eval.json", "w"), ensure_ascii=False, indent=1)
-print("topshe_brain.gguf: %.2f GB | phone-file smoke test %d/%d" % (size / 1e9, ok, len(smoke)))
-""")
-
-code("""# 13. Done
+code("""# 12. Done
 for p in sorted(glob.glob(f"{OUT}/*")):
     print(os.path.basename(p))
 print("Total %.0f min" % ((time.time() - T0) / 60))

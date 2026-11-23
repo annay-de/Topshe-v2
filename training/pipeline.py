@@ -3,10 +3,14 @@ Topshe's weekly self-retraining, run by GitHub Actions (.github/workflows/retrai
 
   python training/pipeline.py start     # Sunday: pack your phone data, start training on Kaggle
   python training/pipeline.py collect   # every few hours: when training is done, test it and publish
+  python training/pipeline.py reexport  # rebuild + test the phone file from the latest Kaggle output
 
 The phone uploads its interaction log + facts to the `data` branch (checked out at ./databranch).
 A new brain is only published if it passes the quality gate - it must not be worse than the
 current one - so a bad week of data can never make Topshe dumber.
+
+Kaggle trains and tests the model (GPU). The phone file is built here, on GitHub's machine
+(training/export_brain.py): merge the LoRA, convert, 4-bit, then prove the training is inside it.
 """
 import glob
 import hashlib
@@ -34,6 +38,7 @@ PART_BYTES = 1900 * 1024 * 1024          # GitHub release files must be < 2 GB
 MIN_VALID = 0.98            # share of replies that are valid JSON
 MIN_EXACT = 0.90            # share of held-back commands fully right
 MAX_DROP = 0.02             # allowed drop vs the current brain (noise margin)
+MIN_SMOKE = 0.85            # share of phone-file test commands right
 
 
 def now():
@@ -174,8 +179,10 @@ def gate(ev, prev):
         reasons.append(f"valid JSON {s.get('valid', 0):.2f} < {MIN_VALID}")
     if s.get("exact", 0) < MIN_EXACT:
         reasons.append(f"command accuracy {s.get('exact', 0):.2f} < {MIN_EXACT}")
-    if ev.get("gguf_smoke", 0) < 0.8:
-        reasons.append(f"the phone file failed its smoke test ({ev.get('gguf_smoke', 0):.2f})")
+    if "gguf_smoke" in ev and not ev.get("weight_check", False):
+        reasons.append("the phone file doesn't contain the training (weight check failed)")
+    if "gguf_smoke" in ev and ev["gguf_smoke"] < MIN_SMOKE:
+        reasons.append(f"the phone file failed its smoke test ({ev['gguf_smoke']:.2f})")
     if not ev.get("chat_ok", False):
         reasons.append("chat answers looked broken")
     if ev.get("style_routing") is not None and ev["style_routing"] < 0.85:
@@ -195,7 +202,8 @@ def gate(ev, prev):
 
 
 KEEP = ("synthetic", "yours", "style_routing", "memory_commands", "memory_chat", "chat_samples", "chat_ok",
-        "gguf_smoke", "train_rows", "your_interactions", "base_model", "llama_cpp", "loss_last")
+        "gguf_smoke", "weight_check", "train_rows", "your_interactions", "base_model", "llama_cpp", "quant",
+        "loss_last")
 
 
 def summarise(ev):
@@ -236,31 +244,70 @@ def collect():
         save_pending(p); log_history(p)
         return
 
+    finish(p)
+
+
+def reexport():
+    """Rebuilds and re-tests the phone file from the latest finished Kaggle run (no new training)."""
+    p = load_pending() or {"started": now(), "started_ts": time.time()}
+    st = kernel_status()
+    print("Kaggle status:", st)
+    if st != "complete":
+        print("The latest Kaggle run isn't complete; nothing to re-export.")
+        return
+    p.update(status="training", reexport=now())
+    finish(p)
+
+
+def fail(p, reason):
+    print("FAILED:", reason)
+    p.update(status="failed", reason=reason, ended=now())
+    save_pending(p); log_history(p)
+
+
+def finish(p):
     out = BUILD / "out"
     shutil.rmtree(out, ignore_errors=True)
     kaggle("kernels", "output", KERNEL, "-p", str(out))
     save_log()
-    gguf = next(iter(glob.glob(str(out / "**" / "topshe_brain.gguf"), recursive=True)), None)
     evf = next(iter(glob.glob(str(out / "**" / "eval.json"), recursive=True)), None)
     tpl = next(iter(glob.glob(str(out / "**" / "prompt_template.json"), recursive=True)), None)
-    if not (gguf and evf and tpl):
-        p.update(status="failed", reason="training finished but files are missing", ended=now())
-        save_pending(p); log_history(p)
-        return
+    ad = next(iter(glob.glob(str(out / "**" / "adapter_config.json"), recursive=True)), None)
+    if not (evf and tpl and ad):
+        return fail(p, "training finished but files are missing")
     ev = json.loads(Path(evf).read_text())
+    for k in ("gguf_smoke", "weight_check", "gguf_bytes", "gguf_sha256"):   # never trust an old phone-file score
+        ev.pop(k, None)
     distill = next(iter(glob.glob(str(out / "**" / "chat_distill.jsonl"), recursive=True)), None)
     if distill:                                   # keep it for next week (saves ~45 GPU minutes)
         (DATA / "data").mkdir(parents=True, exist_ok=True)
         shutil.copy(distill, DATA / "data" / "chat_distill.jsonl")
     prev = previous_manifest()
-    reasons = gate(ev, prev)
-    summary = {k: (ev.get(k) or {}).get("exact") for k in ("synthetic", "yours")}
-    summary.update({k: ev.get(k) for k in ("style_routing", "memory_chat", "gguf_smoke")})
+
+    def scores():
+        sm = {k: (ev.get(k) or {}).get("exact") for k in ("synthetic", "yours")}
+        sm.update({k: ev.get(k) for k in ("style_routing", "memory_chat", "gguf_smoke", "weight_check")})
+        return sm
+
+    reasons = gate(ev, prev)                      # the model's own test scores first (cheap)
+    if not reasons:                               # then build the phone file and test that
+        work = BUILD / "export"
+        shutil.rmtree(work, ignore_errors=True)
+        r = subprocess.run([sys.executable, str(ROOT / "training" / "export_brain.py"), "build", "--adapter",
+                            str(Path(ad).parent), "--template", tpl, "--work", str(work)])   # streams its log
+        rep = work / "export.json"
+        if r.returncode != 0 or not rep.exists():
+            p.update(scores=scores())
+            return fail(p, "building the phone file failed (see the GitHub Actions log)")
+        ev.update(json.loads(rep.read_text()))
+        reasons = gate(ev, prev)
     if reasons:
         print("Quality gate FAILED:", reasons)
-        p.update(status="rejected", reasons=reasons, scores=summary, ended=now())
+        p.update(status="rejected", reasons=reasons, scores=scores(), ended=now())
         save_pending(p); log_history(p)
         return
+    gguf = str(BUILD / "export" / "topshe_brain.gguf")
+    summary = scores()
 
     version = (prev or {}).get("version", 0) + 1
     rel = BUILD / "release"
@@ -294,4 +341,4 @@ def collect():
 
 
 if __name__ == "__main__":
-    {"start": start, "collect": collect}[sys.argv[1]]()
+    {"start": start, "collect": collect, "reexport": reexport}[sys.argv[1]]()
