@@ -17,6 +17,7 @@ jobs:
         run: |
           pip install -q "sherpa-onnx==2.0.2" || pip install -q sherpa-onnx
           pip install -q edge-tts soundfile numpy huggingface_hub
+          which ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null)
           python -c "import sherpa_onnx; print('sherpa-onnx', sherpa_onnx.__version__)"
           ffmpeg -version | head -1
       - name: Download the models
