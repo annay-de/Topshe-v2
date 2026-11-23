@@ -18,6 +18,7 @@ Annay's personal voice assistant for Android. Say **"Topshe"** and it wakes up, 
 | "No, I meant ..." (after a mistake) | Fixes it, and never makes that mistake again |
 | "Topshe, who directed Pather Panchali?" | Answers |
 | "Topshe, go to sleep" | Stops listening |
+| "টপসে, মা-কে ফোন কর" / "গানটা বন্ধ কর" / "কাল সকাল সাড়ে সাতটায় তুলে দিস" | The same in Bengali or Banglish, informal or formal |
 
 ## How it learns
 
@@ -43,7 +44,7 @@ you talk -> phone log -> (daily, Wi-Fi) private `data` branch
 
 ## Privacy and safety
 
-- The wake word, voice check, speech-to-text and brain all run **on the phone**.
+- The wake word, voice check, speech-to-text (Whisper for English plus a Bengali model) and brain all run **on the phone**.
 - Your interaction log goes only to this private repo's `data` branch and to a private Kaggle dataset, for training.
 - It can only do actions from a fixed list. Calls and messages always ask "yes or no". It ignores voices that aren't yours.
 - **Kill switch:** the notification's **Kill** button or the quick-settings tile turns everything off. It never turns itself on.

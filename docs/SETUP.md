@@ -12,10 +12,10 @@
 ## B. Phone
 
 1. Uninstall any old Topshe **once**. From now on, updates install over it, because builds are signed with your permanent key.
-2. Go to **Releases** → install the newest `topshe-v2-build-N.apk`.
+2. Go to **Releases** → install the newest `topshe-v2-build-N.apk`. Play Protect blocks apps downloaded in a browser that can call or text. Turn **Play Store → profile → Play Protect → ⚙ → Scan apps** off, install, then turn it back on. You only need this once: later builds install from inside the app (**App updates → Update the app**).
 3. In the app:
    1. **Permissions:** tap all three buttons.
-   2. **Download voice models:** about 330 MB, use Wi-Fi.
+   2. **Download voice models:** about 330 MB, use Wi-Fi. There are four: wake word, voice check, Whisper (English) and the Bengali model. Progress shows under the button.
    3. **Record my voice:** talk for 25 seconds.
    4. **Brain and learning:** paste a GitHub token and tap **Save token and sync now**. To make the token:
       1. github.com → **Settings** → **Developer settings** → **Fine-grained tokens** → **Generate new token**.
@@ -33,7 +33,8 @@ The **Activity** log shows every wake: what it heard, your voice score, and what
 - Ignores you → lower **Voice check strictness**.
 - Doesn't wake → lower **Wake word strictness**, or add a spelling like `TOP SHAY`.
 - Wakes by itself → raise **Wake word strictness**.
-- Mishears Hindi or Bengali → set **Speech language** to Auto.
+- Bengali: Topshe always listens with both the English and the Bengali model, and the brain picks the one that makes sense. Leave **English speech model** on "English only".
+- For Bengali spoken answers, install a Bengali voice: Settings → Text-to-speech → Google → Install voice data → Bengali (India).
 
 ## Checking on the learning
 
@@ -41,3 +42,7 @@ The **Activity** log shows every wake: what it heard, your voice score, and what
 - The `data` branch's `retrain/history.jsonl` shows every result: published, or rejected and why.
 - **Releases** → `model-N` lists each brain with its test scores.
 - In the app, **Go back to the previous brain** undoes an update.
+
+## App icon
+
+Put any picture at `branding/icon.png` in GitHub (see `branding/README.md`). The next build uses it as the icon. Install it with **Update the app**.
