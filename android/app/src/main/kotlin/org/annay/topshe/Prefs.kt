@@ -44,6 +44,14 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("brainVersion", 0)
         set(v) = sp.edit().putInt("brainVersion", v).apply()
 
+    /** Latest status of the brain / voice-model downloads (written by DownloadWorker, shown in the app). */
+    var brainDl: String
+        get() = sp.getString("brainDl", "") ?: ""
+        set(v) = sp.edit().putString("brainDl", v).apply()
+    var voiceDl: String
+        get() = sp.getString("voiceDl", "") ?: ""
+        set(v) = sp.edit().putString("voiceDl", v).apply()
+
     /** After "go back one brain", don't auto-install this version (or older) again. */
     var skipVersion: Int
         get() = sp.getInt("skipVersion", 0)

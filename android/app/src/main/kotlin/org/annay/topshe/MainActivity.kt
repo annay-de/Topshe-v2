@@ -35,8 +35,8 @@ class MainActivity : Activity() {
     private lateinit var startBtn: Button
     private lateinit var facts: TextView
     @Volatile private var enrolling = false
-    @Volatile private var downloading = false
     private lateinit var dlStatus: TextView
+    private lateinit var brainStatus: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -63,6 +63,7 @@ class MainActivity : Activity() {
         super.onResume()
         if (::status.isInitialized) refresh()
         metal?.setRunning(true)
+        ticker.removeCallbacks(tick); ticker.post(tick)
     }
 
     private fun hasMic() = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -88,6 +89,7 @@ class MainActivity : Activity() {
     override fun onPause() {
         super.onPause()
         metal?.setRunning(false)
+        ticker.removeCallbacks(tick)
     }
 
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
@@ -133,7 +135,7 @@ class MainActivity : Activity() {
         val c2 = k.card("Voice models", "2")
         c2.addView(k.text("Wake word, voice check, and two speech-to-text models: Whisper for English and a Bengali model (Topshe listens with both). Free and open source, about 330 MB to download once (use Wi-Fi)."))
         c2.addView(k.button("Download voice models") { downloadVoiceModels() })
-        dlStatus = k.text(if (Store.voiceModelsReady(this)) "Voice models ready." else "Not downloaded yet.", 13f, Look.TEXT)
+        dlStatus = k.text(if (Store.voiceModelsReady(this)) "Voice models ready." else prefs.voiceDl.ifBlank { "Not downloaded yet." }, 13f, Look.TEXT)
             .apply { setPadding(0, k.dp(10), 0, 0) }
         c2.addView(dlStatus)
         col.addView(c2)
@@ -167,8 +169,13 @@ class MainActivity : Activity() {
             Sync.schedule(this)
             background("Syncing...") { Sync.runSync(this) { setStatus(it) } }
         })
+        brainStatus = k.text(prefs.brainDl.ifBlank { if (prefs.brainVersion > 0) "Brain v${prefs.brainVersion} installed." else "No brain downloaded yet." },
+            13f, Look.TEXT).apply { setPadding(0, k.dp(10), 0, 0) }
+        c5.addView(brainStatus)
+        c5.addView(k.text("The brain downloads in the background with a notification: you can leave Topshe or turn the screen off. If the connection drops it continues where it stopped.", 13f).apply { setPadding(0, k.dp(6), 0, 0) })
         c5.addView(k.button("Go back one brain (re-downloads 2.7 GB, use Wi-Fi)") {
-            background("Going back...") { Sync.rollback(this) { setStatus(it) } }
+            DownloadWorker.brain(this, rollback = true)
+            brainStatus.text = prefs.brainDl
         })
         c5.addView(k.button("Speed test (picks the fastest setting)") {
             background("Testing speed... (takes about a minute)") { Brain.speedTest(this, Memory(this).facts()) }
@@ -306,26 +313,26 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    /** Runs as a foreground download (survives screen-off and app switching); progress shows under the button. */
     private fun downloadVoiceModels() {
-        if (downloading) return
-        downloading = true
-        dlStatus.text = "Starting download (keep this screen open)..."
-        Thread {
-            val error = try {
-                VoiceModels.downloadAll(this) { msg -> android.util.Log.i("Topshe", msg); runOnUiThread { dlStatus.text = msg } }
-                null
-            } catch (t: Throwable) {   // Throwable: show every kind of failure, never fail silently
-                ActivityLog.add(this, "Voice model download failed: ${t.message}\n" +
-                    t.stackTraceToString().lines().take(12).joinToString("\n"))
-                (t.message ?: t.javaClass.simpleName) + (t.cause?.let { " [${it.javaClass.simpleName}]" } ?: "")
-            } finally {
-                downloading = false
+        DownloadWorker.voice(this)
+        dlStatus.text = prefs.voiceDl
+    }
+
+    // Live download progress (read from what DownloadWorker writes), refreshed every second while visible
+    private val ticker = android.os.Handler(android.os.Looper.getMainLooper())
+    private var lastVoice = ""
+    private var lastBrain = ""
+    private val tick = object : Runnable {
+        override fun run() {
+            if (::dlStatus.isInitialized) {
+                val v = prefs.voiceDl
+                if (v.isNotBlank() && v != lastVoice) { lastVoice = v; dlStatus.text = v; if (v.startsWith("Voice models ready")) refresh() }
+                val b = prefs.brainDl
+                if (b.isNotBlank() && b != lastBrain) { lastBrain = b; brainStatus.text = b; if (b.startsWith("Brain v")) refresh() }
             }
-            runOnUiThread {
-                refresh()
-                dlStatus.text = if (error == null) "Voice models ready." else "Download failed: $error\nTap the button to try again."
-            }
-        }.start()
+            ticker.postDelayed(this, 1000)
+        }
     }
 
     // ---------- voice enrollment ----------

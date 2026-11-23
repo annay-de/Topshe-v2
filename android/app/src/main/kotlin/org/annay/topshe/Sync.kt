@@ -103,6 +103,42 @@ object Sync {
         }
     }
 
+    /** Like openAsset, but continues from byte [from] when the server allows it. Returns (stream, resumed). */
+    private fun openAssetFrom(prefs: Prefs, assetApiUrl: String, from: Long): Pair<InputStream, Boolean> {
+        val c = conn(prefs, assetApiUrl)
+        c.setRequestProperty("Accept", "application/octet-stream")
+        c.instanceFollowRedirects = false
+        val target = when (c.responseCode) {
+            in 300..399 -> URL(c.getHeaderField("Location"))
+            in 200..299 -> return c.inputStream to false
+            else -> throw IllegalStateException("Download failed (${c.responseCode})")
+        }
+        val d = (target.openConnection() as HttpURLConnection).apply {
+            connectTimeout = 20_000; readTimeout = 120_000
+            if (from > 0) setRequestProperty("Range", "bytes=$from-")
+        }
+        return when (d.responseCode) {
+            206 -> d.inputStream to true
+            200 -> d.inputStream to false
+            else -> throw IllegalStateException("Download failed (${d.responseCode})")
+        }
+    }
+
+    private fun sha256(f: File, offset: Long, length: Long): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        java.io.RandomAccessFile(f, "r").use { raf ->
+            raf.seek(offset)
+            val buf = ByteArray(1 shl 20)
+            var left = length
+            while (left > 0) {
+                val n = raf.read(buf, 0, minOf(buf.size.toLong(), left).toInt())
+                if (n <= 0) break
+                md.update(buf, 0, n); left -= n
+            }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }
+    }
+
     // ---------------- 1. upload ----------------
 
     fun upload(ctx: Context) {
@@ -136,13 +172,11 @@ object Sync {
         return out
     }
 
-    private fun sha256(f: File): String {
-        val md = MessageDigest.getInstance("SHA-256")
-        f.inputStream().buffered(1 shl 20).use { s ->
-            val buf = ByteArray(1 shl 20)
-            while (true) { val n = s.read(buf); if (n <= 0) break; md.update(buf, 0, n) }
-        }
-        return md.digest().joinToString("") { "%02x".format(it) }
+    /** The newest brain version that should be installed, or null if the phone already has it. */
+    fun newerBrain(ctx: Context): Int? {
+        val prefs = Prefs(ctx)
+        val v = brainReleases(prefs).keys.filter { it > prefs.skipVersion }.maxOrNull() ?: return null
+        return v.takeIf { it != prefs.brainVersion || !Store.brain(ctx).exists() }
     }
 
     /** Downloads + verifies + installs a brain: the newest one, or [target] (used for going back). */
@@ -160,20 +194,58 @@ object Sync {
 
         // Old builds kept a backup copy; it's no longer needed
         File(ctx.filesDir, "topshe_brain_prev.gguf").delete()
-        val tmp = File(ctx.filesDir, "topshe_brain.download")
-        tmp.delete()
+        File(ctx.filesDir, "topshe_brain.download").delete()
+        // One partial file per version: an interrupted download continues from where it stopped
+        val tmp = File(ctx.filesDir, "topshe_brain_v$version.download")
+        ctx.filesDir.listFiles()?.filter { it.name.startsWith("topshe_brain_v") && it.name.endsWith(".download") && it != tmp }
+            ?.forEach { it.delete() }
         val parts = manifest.getJSONArray("parts")
-        tmp.outputStream().buffered(1 shl 20).use { out ->
+        val total = (0 until parts.length()).sumOf { parts.getJSONObject(it).getLong("bytes") }
+        val have0 = if (tmp.exists()) tmp.length().coerceAtMost(total) else 0L
+        val free = ctx.filesDir.usableSpace
+        if (free < total - have0 + 300L * 1024 * 1024)
+            return "Not enough space: the brain needs %.1f GB free (%.1f GB free now).".format((total - have0) / 1e9 + 0.3, free / 1e9)
+        java.io.RandomAccessFile(tmp, "rw").use { raf ->
+            var offset = 0L
+            var shown = -1L
             for (i in 0 until parts.length()) {
                 val p = parts.getJSONObject(i)
-                progress("Downloading brain v$version: part ${i + 1} of ${parts.length()}...")
-                openAsset(prefs, asset(p.getString("name"))!!.getString("url")).use { it.copyTo(out, 1 shl 20) }
+                val size = p.getLong("bytes")
+                val have = (raf.length() - offset).coerceIn(0, size)
+                if (have < size) {
+                    val (input, resumed) = openAssetFrom(prefs, asset(p.getString("name"))!!.getString("url"), have)
+                    var pos = offset + if (resumed) have else 0L
+                    raf.seek(pos)
+                    input.use { s ->
+                        val buf = ByteArray(1 shl 20)
+                        while (pos < offset + size) {
+                            val n = s.read(buf, 0, minOf(buf.size.toLong(), offset + size - pos).toInt())
+                            if (n <= 0) break
+                            raf.write(buf, 0, n)
+                            pos += n
+                            val mb = pos shr 20
+                            if (mb / 8 != shown) {
+                                shown = mb / 8
+                                progress("Downloading brain v$version: ${pos shr 20} / ${total shr 20} MB")
+                            }
+                        }
+                    }
+                    if (pos < offset + size) throw java.io.IOException("connection dropped at ${pos shr 20} MB")
+                }
+                offset += size
             }
+            raf.setLength(total)
         }
-        progress("Checking the download...")
-        if (sha256(tmp) != manifest.getString("sha256")) {
-            tmp.delete()
-            return "Download was corrupted; will try again later."
+        // Check each part; a bad part is cut off and downloaded again on the next try
+        var off = 0L
+        for (i in 0 until parts.length()) {
+            val p = parts.getJSONObject(i)
+            progress("Checking the download (part ${i + 1} of ${parts.length()})...")
+            if (sha256(tmp, off, p.getLong("bytes")) != p.getString("sha256")) {
+                java.io.RandomAccessFile(tmp, "rw").use { it.setLength(off) }
+                throw java.io.IOException("part ${i + 1} was damaged; downloading it again")
+            }
+            off += p.getLong("bytes")
         }
         // Swap in only after the new one is verified. The running brain keeps its open copy until the
         // listener reloads (deleting an open file is safe on Android), so nothing breaks mid-sentence.
@@ -242,9 +314,14 @@ object Sync {
         val out = StringBuilder()
         runCatching { applySeedFacts(ctx) }
         runCatching { upload(ctx) }.onFailure { out.append("Upload failed: ${it.message}\n") }.onSuccess { out.append("Uploaded your data.\n") }
-        val metered = ctx.getSystemService(ConnectivityManager::class.java).isActiveNetworkMetered
-        if (metered) out.append("On mobile data: brain download waits for Wi-Fi.")
-        else runCatching { updateBrain(ctx, null, progress) }.onSuccess { out.append(it) }.onFailure { out.append("Brain check failed: ${it.message}") }
+        runCatching { newerBrain(ctx) }.onSuccess { v ->
+            if (v == null) out.append("Brain is up to date (v${prefs.brainVersion}).")
+            else {
+                DownloadWorker.brain(ctx)   // foreground download: survives screen-off, resumes if interrupted
+                val metered = ctx.getSystemService(ConnectivityManager::class.java).isActiveNetworkMetered
+                out.append("Downloading brain v$v in the background" + if (metered) " (starts when you're on Wi-Fi)." else " - see the notification.")
+            }
+        }.onFailure { out.append("Brain check failed: ${it.message}") }
         runCatching { Updater.available(ctx) }.getOrNull()?.let { n ->
             out.append("\nApp build $n is available: open Topshe and tap Update the app.")
             notify(ctx, "App build $n is ready. Open Topshe and tap Update the app.", 43)

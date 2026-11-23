@@ -30,12 +30,18 @@ find_and_tap() {
 }
 
 find_and_tap "Download voice models" || { cat ui.xml | head -c 3000; echo "RESULT: BUTTON NOT FOUND"; exit 1; }
+sleep 4
+echo "Leaving the app and turning the screen off during the download"
+adb shell input keyevent KEYCODE_HOME
+adb shell input keyevent KEYCODE_SLEEP
 for i in $(seq 1 150); do
   sleep 8
   adb logcat -d -s Topshe:I | tail -1
   if adb logcat -d -s Topshe:I | grep -q "Voice models ready"; then echo "RESULT: SUCCESS"; break; fi
-  if adb logcat -d | grep -q "Voice model download failed\|FATAL EXCEPTION"; then echo "RESULT: FAILED"; break; fi
+  if adb logcat -d | grep -q "Download failed\|Voice model download failed\|FATAL EXCEPTION"; then echo "RESULT: FAILED"; break; fi
 done
+adb shell input keyevent KEYCODE_WAKEUP; adb shell wm dismiss-keyguard 2>/dev/null; adb shell input swipe $X $Y1 $X $Y2 300
+adb shell am start -n "$PKG/org.annay.topshe.MainActivity"; sleep 4
 adb exec-out screencap -p > screen_3_after.png
 echo "----- full log -----"
 adb logcat -d -s Topshe:I AndroidRuntime:E System.err:W | tail -120
