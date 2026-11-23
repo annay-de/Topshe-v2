@@ -12,6 +12,10 @@ on:
         description: "start, collect, or reexport (rebuild the phone file from the last Kaggle run)"
         required: true
         default: start
+      brain:
+        description: "command (0.8B, every request) or chat (2B, answers questions)"
+        required: false
+        default: command
 
 permissions:
   contents: write
@@ -59,7 +63,9 @@ jobs:
           # Use whichever Kaggle login was provided; empty ones would confuse the Kaggle tool
           [ -z "$KAGGLE_API_TOKEN" ] && unset KAGGLE_API_TOKEN
           [ -z "$KAGGLE_KEY" ] && unset KAGGLE_KEY
-          python training/pipeline.py "$MODE"
+          BRAIN="${{ github.event.inputs.brain }}"
+          if [ "$MODE" = "collect" ] && [ "${{ github.event_name }}" = "schedule" ]; then BRAIN=""; fi
+          python training/pipeline.py "$MODE" $BRAIN
 
       - name: Save status to the data branch
         if: always()

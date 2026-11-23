@@ -28,15 +28,15 @@ from pathlib import Path
 
 LLAMA_CPP_TAG = "b12602"            # must match android/app/src/main/cpp/CMakeLists.txt
 QUANT = "Q4_K_M"
-# sample weights for the weight check: (layer, module, phone-file tensor)
-CHECKS = [(3, "mlp.down_proj", "blk.3.ffn_down.weight"), (3, "mlp.gate_proj", "blk.3.ffn_gate.weight"),
-          (17, "mlp.up_proj", "blk.17.ffn_up.weight"), (30, "mlp.down_proj", "blk.30.ffn_down.weight")]
 SMOKE_CMD = [("wake me up at 6:45 tomorrow", "set_alarm"), ("play tum hi ho", "media"), ("call maa", "call"),
              ("remember that my gym is at 7", "remember"), ("go to sleep", "stop"),
              ("why is the sky blue", "chat"), ("set a timer for 10 minutes", "set_timer"),
              ("remind me to call baba at 8 pm", "set_reminder"), ("open spotify", "open_app"),
              ("pause the music", "media"), ("text riya that i'm running late", "message")]
-SMOKE_CHAT = [("who directed pather panchali?", "ray")]
+SMOKE_CHAT = [("who directed pather panchali?", "")]      # command brain: any plain answer (not JSON)
+# chat brain: must know things, know who it is, and answer simply
+SMOKE_CHAT_BRAIN = [("who directed pather panchali?", "ray"), ("who are you?", "topshe"),
+                    ("what is an instrumental variable, simply?", "variable")]
 # Two-hearing brains: real outputs of the phone's two speech models (Whisper English | Bengali zipformer)
 SMOKE_DUAL = [("Wake me up at 6.45 tomorrow.", "উইক মিয়াপ অ্যাডসেক্স ফার্টি ফাইভ টু মরো", "set_alarm"),
               ("Set a timer for 10 minutes.", "সেট আর টাইমার ফর ট্যাঙ্ক ম্যানেজ", "set_timer"),
@@ -152,6 +152,16 @@ def rewrite_shard(path, new_tensors):
     os.replace(tmp, path)
 
 
+def checks_for(mods):
+    """The sample weights for this model's depth (4B: layers 3, 17, 30 as before; 0.8B/2B: fewer layers)."""
+    import re as _re
+    layers = [int(m.group(1)) for n in mods for m in [_re.search(r"\.layers\.(\d+)\.", n)] if m]
+    n = max(layers) + 1
+    mid, last = n // 2 + 1, n - 2
+    return [(3, "mlp.down_proj", "blk.3.ffn_down.weight"), (3, "mlp.gate_proj", "blk.3.ffn_gate.weight"),
+            (mid, "mlp.up_proj", f"blk.{mid}.ffn_up.weight"), (last, "mlp.down_proj", f"blk.{last}.ffn_down.weight")]
+
+
 def cmd_merge(a):
     """Adds the LoRA delta to the base weights in place. Changed weights are stored as float16
     (finer than bfloat16, and the phone file is converted to float16 anyway)."""
@@ -173,7 +183,7 @@ def cmd_merge(a):
     print(f"LoRA modules: {len(mods)} (scale {scale}); all matched a base weight")
 
     check_keys = {}
-    for layer, part, _ in CHECKS:
+    for layer, part, _ in checks_for(mods):
         hit = [n for n in mods if n.endswith(f".layers.{layer}.{part}")]
         if len(hit) != 1:
             raise SystemExit(f"weight check: expected one LoRA module for layer {layer} {part}, found {hit}")
@@ -221,7 +231,7 @@ def cmd_check(a):
     rd = gguf.GGUFReader(a.gguf)
     gt = {t.name: t for t in rd.tensors}
     rows, ok = [], True
-    for layer, part, gname in CHECKS:
+    for layer, part, gname in checks_for(mods):
         name = [n for n in mods if n.endswith(f".layers.{layer}.{part}")][0]
         W = keep["base." + name + ".weight"].float()
         delta = (mods[name]["B"].float() @ mods[name]["A"].float()) * scale
@@ -262,10 +272,12 @@ def first_json(text):
     return None
 
 
-def smoke(simple, gguf_path, tpl):
+def smoke(simple, gguf_path, tpl, role="command"):
     T, CMD, CHAT = tpl["template"], tpl["cmd_system"], tpl["chat_system"]
     results, ok = [], 0
-    if tpl.get("hearing") == "dual-v1":     # same format as make_dataset_v4.hearing() and the app
+    if role == "chat":
+        tests = [(True, u, w) for u, w in SMOKE_CHAT_BRAIN]
+    elif tpl.get("hearing") == "dual-v1":     # same format as make_dataset_v4.hearing() and the app
         tests = [(False, f"english: {en}\nbangla: {bn}", w) for en, bn, w in SMOKE_DUAL]
         tests += [(False, u, w) for u, w in SMOKE_LEGACY] + [(True, u, w) for u, w in SMOKE_CHAT]
     else:
@@ -350,7 +362,7 @@ def cmd_build(a):
     chk4 = work / "check_q4.json"
     sh([py, me, "check", "--adapter", a.adapter, "--keep", str(keep), "--gguf", str(out), "--report", str(chk4)])
     w16, w4 = json.loads(chk16.read_text()), json.loads(chk4.read_text())
-    score, results = smoke(f"{lc}/build/bin/llama-simple", str(out), tpl)
+    score, results = smoke(f"{lc}/build/bin/llama-simple", str(out), tpl, a.role)
     report = {
         "weight_check": bool(w16["ok"] and w4["ok"]), "weight_check_f16": w16, "weight_check_q4": w4,
         "merge": json.loads(merge_rep.read_text()), "gguf_smoke": score, "gguf_smoke_detail": results,
@@ -370,6 +382,7 @@ if __name__ == "__main__":
     b.add_argument("--template", required=True)
     b.add_argument("--work", required=True)
     b.add_argument("--base", default=None)
+    b.add_argument("--role", default="command", choices=["command", "chat"])
     m = sub.add_parser("merge")
     for x in ("--adapter", "--model", "--keep", "--report"):
         m.add_argument(x, required=True)

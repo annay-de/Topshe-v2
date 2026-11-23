@@ -1,9 +1,12 @@
 """
 Topshe's weekly self-retraining, run by GitHub Actions (.github/workflows/retrain.yml).
 
-  python training/pipeline.py start     # Sunday: pack your phone data, start training on Kaggle
-  python training/pipeline.py collect   # every few hours: when training is done, test it and publish
-  python training/pipeline.py reexport  # rebuild + test the phone file from the latest Kaggle output
+  python training/pipeline.py start [command|chat]     # pack your phone data, start training on Kaggle
+  python training/pipeline.py collect                  # every few hours: test finished runs and publish
+  python training/pipeline.py reexport [command|chat]  # rebuild + test the phone file from the latest Kaggle output
+
+Two brains: "command" (Qwen 3.5 0.8B, every request, retrained weekly on your usage; releases model-N)
+and "chat" (Qwen 3.5 2B, answers questions; trained when needed; releases chat-N).
 
 The phone uploads its interaction log + facts to the `data` branch (checked out at ./databranch).
 A new brain is only published if it passes the quality gate - it must not be worse than the
@@ -26,11 +29,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "databranch"
 BUILD = ROOT / "build"
-PENDING = DATA / "retrain" / "pending.json"
 HISTORY = DATA / "retrain" / "history.jsonl"
 USER = os.environ.get("KAGGLE_USERNAME", "").strip().lower()
 DATASET = f"{USER}/topshe-data"
-KERNEL = f"{USER}/topshe-trainer"
+ROLES = ("command", "chat")
+ROLE = "command"                  # set from the command line
+KERNELS = {"command": f"{USER}/topshe-trainer", "chat": f"{USER}/topshe-chat-trainer"}
+NOTEBOOKS = {"command": "topshe_trainer.ipynb", "chat": "topshe_chat_trainer.ipynb"}
+TAGS = {"command": "model", "chat": "chat"}            # release names: model-3, chat-1
+FILES = {"command": "topshe_brain", "chat": "topshe_chat"}
+
+
+def kernel():
+    return KERNELS[ROLE]
+
+
+def pending_file():
+    return DATA / "retrain" / ("pending.json" if ROLE == "command" else f"pending_{ROLE}.json")
 REPO = os.environ.get("GITHUB_REPOSITORY", "annay-de/topshe-v2")
 PART_BYTES = 1900 * 1024 * 1024          # GitHub release files must be < 2 GB
 
@@ -64,18 +79,20 @@ def kaggle(*args, check=True):
 
 
 def load_pending():
-    return json.loads(PENDING.read_text()) if PENDING.exists() else None
+    f = pending_file()
+    return json.loads(f.read_text()) if f.exists() else None
 
 
 def save_pending(p):
-    PENDING.parent.mkdir(parents=True, exist_ok=True)
-    PENDING.write_text(json.dumps(p, indent=1))
+    f = pending_file()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps({**p, "role": ROLE}, indent=1))
 
 
 def log_history(entry):
     HISTORY.parent.mkdir(parents=True, exist_ok=True)
     with open(HISTORY, "a") as f:
-        f.write(json.dumps(entry) + "\n")
+        f.write(json.dumps({**entry, "role": ROLE}) + "\n")
 
 
 # ---------------------------------------------------------------- start
@@ -126,13 +143,14 @@ def start():
         time.sleep(15)
 
     # 3) push the trainer notebook; pushing starts a run on a Kaggle GPU
-    run([sys.executable, str(ROOT / "training" / "build_notebook.py")])
+    run([sys.executable, str(ROOT / "training" / "build_notebook.py"), ROLE])
     kd = BUILD / "kernel"
     shutil.rmtree(kd, ignore_errors=True)
     kd.mkdir(parents=True)
-    shutil.copy(ROOT / "training" / "topshe_trainer.ipynb", kd / "topshe-trainer.ipynb")
+    slug = kernel().split("/")[1]
+    shutil.copy(ROOT / "training" / NOTEBOOKS[ROLE], kd / f"{slug}.ipynb")
     (kd / "kernel-metadata.json").write_text(json.dumps({
-        "id": KERNEL, "title": "topshe-trainer", "code_file": "topshe-trainer.ipynb",
+        "id": kernel(), "title": slug, "code_file": f"{slug}.ipynb",
         "language": "python", "kernel_type": "notebook", "is_private": True,
         "enable_gpu": True, "enable_internet": True, "enable_tpu": False,
         "dataset_sources": [DATASET], "competition_sources": [], "kernel_sources": [], "model_sources": [],
@@ -141,14 +159,14 @@ def start():
     if r.returncode != 0:
         kaggle("kernels", "push", "-p", str(kd))
     save_pending({"status": "training", "started": now(), "started_ts": time.time(),
-                  "kernel": KERNEL, "interactions": len(lines)})
-    print("Training started on Kaggle")
+                  "kernel": kernel(), "interactions": len(lines)})
+    print(f"Training the {ROLE} brain started on Kaggle")
 
 
 # ---------------------------------------------------------------- collect
 
 def kernel_status():
-    out = kaggle("kernels", "status", KERNEL, check=False).stdout.lower()
+    out = kaggle("kernels", "status", kernel(), check=False).stdout.lower()
     for s in ("complete", "error", "cancel", "running", "queued"):
         if s in out:
             return s
@@ -157,15 +175,15 @@ def kernel_status():
 
 def save_log():
     """Keeps the latest Kaggle log in the data branch (retrain/last_run.log) for debugging."""
-    r = kaggle("kernels", "logs", KERNEL, check=False)
+    r = kaggle("kernels", "logs", kernel(), check=False)
     text = (r.stdout or "") + (r.stderr or "")
     (DATA / "retrain").mkdir(parents=True, exist_ok=True)
-    (DATA / "retrain" / "last_run.log").write_text(text[-200_000:])
+    (DATA / "retrain" / ("last_run.log" if ROLE == "command" else f"last_run_{ROLE}.log")).write_text(text[-200_000:])
 
 
 def previous_manifest():
     r = run(["gh", "release", "list", "-R", REPO, "--limit", "100", "--json", "tagName"], check=False)
-    tags = [t["tagName"] for t in json.loads(r.stdout or "[]") if t["tagName"].startswith("model-")]
+    tags = [t["tagName"] for t in json.loads(r.stdout or "[]") if t["tagName"].startswith(TAGS[ROLE] + "-")]
     if not tags:
         return None
     latest = max(tags, key=lambda t: int(t.split("-")[1]))
@@ -178,6 +196,10 @@ def previous_manifest():
 
 def gate(ev, prev):
     """Returns the reasons to reject a new brain (empty list = publish)."""
+    if prev and (prev.get("eval") or {}).get("base_model") != ev.get("base_model"):
+        prev = None            # a different brain size: judged on the fixed bars only, not against the old one
+    if ROLE == "chat":
+        return gate_chat(ev, prev)
     s = ev.get("synthetic") or {}
     reasons = []
     if s.get("valid", 0) < MIN_VALID:
@@ -212,7 +234,26 @@ def gate(ev, prev):
     return reasons
 
 
-KEEP = ("synthetic", "bengali", "heard", "yours", "style_routing", "memory_commands", "memory_chat", "chat_samples", "chat_ok",
+def gate_chat(ev, prev):
+    reasons = []
+    if "gguf_smoke" in ev and not ev.get("weight_check", False):
+        reasons.append("the phone file doesn't contain the training (weight check failed)")
+    if "gguf_smoke" in ev and ev["gguf_smoke"] < 0.66:
+        reasons.append(f"the phone file failed its chat test ({ev['gguf_smoke']:.2f})")
+    if not ev.get("chat_ok", False):
+        reasons.append("chat answers looked broken")
+    if not ev.get("chat_identity", False):
+        reasons.append("didn't say it's Topshe")
+    if not ev.get("chat_bengali", False):
+        reasons.append("didn't answer a Bengali question in Bengali")
+    if ev.get("memory_chat", 0) < 0.5:
+        reasons.append(f"didn't use what it was told to remember ({ev.get('memory_chat', 0):.2f})")
+    if prev and ev.get("memory_chat", 0) < (prev.get("eval") or {}).get("memory_chat", 0) - 0.25:
+        reasons.append("worse than the current chat brain at using memory")
+    return reasons
+
+
+KEEP = ("role", "chat_identity", "chat_bengali", "synthetic", "bengali", "heard", "yours", "style_routing", "memory_commands", "memory_chat", "chat_samples", "chat_ok",
         "gguf_smoke", "weight_check", "train_rows", "your_interactions", "base_model", "llama_cpp", "quant",
         "loss_last")
 
@@ -279,7 +320,7 @@ def fail(p, reason):
 def finish(p):
     out = BUILD / "out"
     shutil.rmtree(out, ignore_errors=True)
-    kaggle("kernels", "output", KERNEL, "-p", str(out))
+    kaggle("kernels", "output", kernel(), "-p", str(out))
     save_log()
     evf = next(iter(glob.glob(str(out / "**" / "eval.json"), recursive=True)), None)
     tpl = next(iter(glob.glob(str(out / "**" / "prompt_template.json"), recursive=True)), None)
@@ -305,7 +346,7 @@ def finish(p):
         work = BUILD / "export"
         shutil.rmtree(work, ignore_errors=True)
         r = subprocess.run([sys.executable, str(ROOT / "training" / "export_brain.py"), "build", "--adapter",
-                            str(Path(ad).parent), "--template", tpl, "--work", str(work)])   # streams its log
+                            str(Path(ad).parent), "--template", tpl, "--work", str(work), "--role", ROLE])   # streams its log
         rep = work / "export.json"
         if r.returncode != 0 or not rep.exists():
             p.update(scores=scores())
@@ -332,24 +373,38 @@ def finish(p):
             chunk = f.read(PART_BYTES)
             if not chunk:
                 break
-            name = f"topshe_brain_v{version}.gguf.part{i:02d}"
+            name = f"{FILES[ROLE]}_v{version}.gguf.part{i:02d}"
             (rel / name).write_bytes(chunk)
             parts.append({"name": name, "bytes": len(chunk), "sha256": hashlib.sha256(chunk).hexdigest()})
             i += 1
     manifest = {
-        "version": version, "created": now(), "sha256": full_sha, "bytes": os.path.getsize(gguf),
+        "version": version, "role": ROLE, "created": now(), "sha256": full_sha, "bytes": os.path.getsize(gguf),
         "parts": parts, "prompt": json.loads(Path(tpl).read_text()), "eval": summarise(ev),
     }
     (rel / "manifest.json").write_text(json.dumps(manifest, indent=1, ensure_ascii=False))
-    notes = (f"Weekly brain v{version}. Command accuracy: {summary['synthetic']:.1%}"
-             + (f", your commands: {summary['yours']:.1%}" if summary.get("yours") is not None else "")
-             + f". Trained on {ev.get('your_interactions', 0)} of your interactions.")
-    run(["gh", "release", "create", f"model-{version}", "-R", REPO, "--title", f"Topshe brain v{version}",
+    size = ev.get("base_model", "").split("-")[-1]
+    if ROLE == "chat":
+        notes = f"Chat brain v{version} ({size}). Uses memory: {ev.get('memory_chat', 0):.0%}."
+        title = f"Topshe chat brain v{version}"
+    else:
+        notes = (f"Brain v{version} ({size}). Command accuracy: {summary['synthetic']:.1%}"
+                 + (f", your commands: {summary['yours']:.1%}" if summary.get("yours") is not None else "")
+                 + f". Trained on {ev.get('your_interactions', 0)} of your interactions.")
+        title = f"Topshe brain v{version}"
+    tag = f"{TAGS[ROLE]}-{version}"
+    run(["gh", "release", "create", tag, "-R", REPO, "--title", title,
          "--notes", notes, "--latest=false", *[str(x) for x in sorted(rel.iterdir())]])
     p.update(status="published", version=version, scores=summary, ended=now())
     save_pending(p); log_history(p)
-    print("Published", f"model-{version}")
+    print("Published", tag)
 
 
 if __name__ == "__main__":
-    {"start": start, "collect": collect, "reexport": reexport}[sys.argv[1]]()
+    if sys.argv[1] == "collect" and len(sys.argv) < 3:       # the schedule: check both brains
+        for ROLE in ROLES:
+            print(f"===== {ROLE} brain =====")
+            collect()
+    else:
+        ROLE = sys.argv[2] if len(sys.argv) > 2 else "command"
+        assert ROLE in ROLES, ROLE
+        {"start": start, "collect": collect, "reexport": reexport}[sys.argv[1]]()

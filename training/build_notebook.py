@@ -13,10 +13,20 @@ Verified against the actual sources (Nov 2026):
     save_pretrained_merged wrote untouched base weights for Qwen 3.5 in the first run.)
 """
 import json
+import sys
 from pathlib import Path
 
 HERE = Path(__file__).parent
-BASE_MODEL = "unsloth/Qwen3.5-4B"
+# Two brains (Nov 2026): the 4B was far too slow on the phone's 2 fast cores (~3 words/s).
+#   command: Qwen 3.5 0.8B - every request goes through it, so it must be fast (~4x the 4B)
+#   chat:    Qwen 3.5 2B   - answers questions and small talk (~2x the 4B, much smarter than 0.8B)
+ROLE = sys.argv[1] if len(sys.argv) > 1 else "command"
+BASES = {"command": "unsloth/Qwen3.5-0.8B", "chat": "unsloth/Qwen3.5-2B"}
+BASE_MODEL = BASES[ROLE]
+TEACHER = "unsloth/Qwen3.5-4B"    # wrote the cached chat answers (chat_distill.jsonl); small brains learn from it
+EPOCHS = {"command": 2, "chat": 3}[ROLE]
+LORA_R = {"command": 32, "chat": 16}[ROLE]
+NOTEBOOK = {"command": "topshe_trainer.ipynb", "chat": "topshe_chat_trainer.ipynb"}[ROLE]
 LLAMA_CPP_TAG = "b12602"          # must match android/app/src/main/cpp/CMakeLists.txt
 UNSLOTH_VERSION = "2026.11.9"     # pinned: the version these steps were checked against
 
@@ -31,7 +41,7 @@ def code(s):
     cells.append({"cell_type": "code", "metadata": {}, "execution_count": None, "outputs": [], "source": s})
 
 
-md(f"""# Topshe trainer (Qwen 3.5 4B)
+md(f"""# Topshe trainer - {ROLE} brain ({BASE_MODEL.split("/")[-1]})
 
 Used for the first training run **and** every weekly retrain (the GitHub pipeline pushes it here automatically).
 
@@ -58,7 +68,11 @@ def sh(cmd):
 """)
 
 code(f"""# 2. Settings
+ROLE = "{ROLE}"                # command: turns your words into actions (+ basic chat); chat: answers questions
 BASE_MODEL = "{BASE_MODEL}"
+TEACHER = "{TEACHER}"
+EPOCHS = {EPOCHS}
+LORA_R = {LORA_R}
 LLAMA_CPP_TAG = "{LLAMA_CPP_TAG}"
 MAX_LEN = 1024
 TRAIN_HOURS_LIMIT = 3.5        # training stops safely after this long
@@ -79,7 +93,7 @@ def read_jsonl(path):
 interactions = read_jsonl(find("user_interactions.jsonl"))
 facts = json.load(open(find("facts.json"))).get("facts", []) if find("facts.json") else []
 past_messages = read_jsonl(find("claude_messages.jsonl"))
-distill_cached = [r for r in read_jsonl(find("chat_distill.jsonl")) if r.get("base_model") == BASE_MODEL]
+distill_cached = [r for r in read_jsonl(find("chat_distill.jsonl")) if r.get("base_model") in (BASE_MODEL, TEACHER)]
 prev_eval = json.load(open(find("prev_eval.json"))) if find("prev_eval.json") else {}
 print(f"interactions {len(interactions)} | facts {len(facts)} | past messages {len(past_messages)} | "
       f"cached chat {len(distill_cached)} | last week's scores: {bool(prev_eval)}")
@@ -126,13 +140,15 @@ eval_style, style = style[:100], style[100:]
 train += style
 
 eval_mem_chat, eval_mem_cmd = eval_memory_rows()
+if ROLE == "chat":     # the chat brain only answers; the command brain decides what you want
+    train = [r for r in train if r["kind"] in ("identity", "memory_chat")]
 eval_heard = eval_heard_rows()                        # held-back real hearings (never trained on)
 print("synthetic", len(synthetic), "| re-weighted extra", len(extra), "| yours", len(mine),
       "| style", len(style), "| eval: synth", len(eval_synth), "bengali", len(eval_bn), "yours", len(eval_user),
       "style", len(eval_style))
 """)
 
-code("""# 6. Load Qwen 3.5 4B (16-bit LoRA, language layers only)
+code("""# 6. Load the base model (16-bit LoRA, language layers only)
 from unsloth import FastModel
 import torch
 
@@ -141,7 +157,7 @@ model, processor = FastModel.from_pretrained(
     load_in_4bit=False, load_in_16bit=True, full_finetuning=False,
 )
 model = FastModel.get_peft_model(
-    model, r=16, lora_alpha=16, lora_dropout=0, bias="none",
+    model, r=LORA_R, lora_alpha=LORA_R, lora_dropout=0, bias="none",
     finetune_vision_layers=False, finetune_language_layers=True,
     finetune_attention_modules=True, finetune_mlp_modules=True,
     use_gradient_checkpointing="unsloth", random_state=3407,
@@ -184,8 +200,8 @@ def generate(system, user, max_new=96, model_=None):
     return text.split("</think>")[-1].strip()
 """)
 
-code("""# 8. General chat, written by the base model itself (keeps its knowledge; made once, reused)
-# LoRA starts as a no-op, so before training the model answers exactly like plain Qwen 3.5 4B.
+code("""# 8. General chat answers (made once by Qwen 3.5 4B, reused every week; the small brains learn from them)
+# If there's no cache yet, the base model writes them itself (the LoRA starts as a no-op).
 if len(distill_cached) >= N_DISTILL // 2:
     distill = distill_cached
     print("Reusing", len(distill), "cached chat examples")
@@ -262,7 +278,7 @@ class TimeLimit(TrainerCallback):
 bf16 = torch.cuda.is_bf16_supported()
 args = TrainingArguments(
     output_dir=f"{TMP}/ckpt", per_device_train_batch_size=2, gradient_accumulation_steps=8,
-    num_train_epochs=1, learning_rate=2e-4, warmup_steps=20, lr_scheduler_type="linear",
+    num_train_epochs=EPOCHS, learning_rate=2e-4, warmup_steps=20, lr_scheduler_type="linear",
     logging_steps=25, optim="adamw_8bit", weight_decay=0.01, seed=3407,
     fp16=not bf16, bf16=bf16, save_strategy="no", report_to="none", remove_unused_columns=False,
 )
@@ -300,12 +316,14 @@ def score(rows):
     return {"n": len(rows), "valid": valid / n, "action": action / n, "exact": exact / n,
             "per_action": {k: v[0] / v[1] for k, v in per.items()}, "misses": misses[:25]}
 
-ev = {"synthetic": score(eval_synth)}
-ev["bengali"] = score(eval_bn) if eval_bn else None
-ev["heard"] = score(eval_heard) if eval_heard else None
-ev["yours"] = score(eval_user) if eval_user else None
-ev["style_routing"] = score(eval_style)["action"] if eval_style else None      # your normal talk -> chat
-ev["memory_commands"] = score(eval_mem_cmd)["exact"]
+ev = {"role": ROLE}
+if ROLE == "command":
+    ev["synthetic"] = score(eval_synth)
+    ev["bengali"] = score(eval_bn) if eval_bn else None
+    ev["heard"] = score(eval_heard) if eval_heard else None
+    ev["yours"] = score(eval_user) if eval_user else None
+    ev["style_routing"] = score(eval_style)["action"] if eval_style else None      # your normal talk -> chat
+    ev["memory_commands"] = score(eval_mem_cmd)["exact"]
 hits = 0
 for r in eval_mem_chat:
     hits += r["assistant"].lower() in generate(r["system"], r["user"], 60).lower()
@@ -315,6 +333,11 @@ samples = {q: generate(with_facts(CHAT_SYSTEM, facts), q, 80) for q in
             "পথের পাঁচালী কে বানিয়েছিল?"]}
 ev["chat_samples"] = samples
 ev["chat_ok"] = all(5 <= len(a) <= 600 and not a.startswith("{") for a in samples.values())
+if ROLE == "chat":     # knows who it is, and answers Bengali in Bengali
+    who = generate(CHAT_SYSTEM, "who are you?", 60).lower()
+    bn = samples["পথের পাঁচালী কে বানিয়েছিল?"]
+    ev["chat_identity"] = "topshe" in who
+    ev["chat_bengali"] = sum("\u0980" <= ch <= "\u09ff" for ch in bn) > len(bn) // 3
 ev.update({"train_rows": len(train), "your_interactions": len(interactions), "base_model": BASE_MODEL,
            "loss_last": losses[-1], "minutes_to_eval": round((time.time() - T0) / 60)})
 json.dump(ev, open(f"{OUT}/eval.json", "w"), ensure_ascii=False, indent=1)
@@ -331,6 +354,6 @@ print("Total %.0f min" % ((time.time() - T0) / 60))
 nb = {"cells": cells, "metadata": {"kernelspec": {"name": "python3", "display_name": "Python 3", "language": "python"},
                                     "language_info": {"name": "python"}},
       "nbformat": 4, "nbformat_minor": 5}
-out = HERE / "topshe_trainer.ipynb"
+out = HERE / NOTEBOOK
 out.write_text(json.dumps(nb, indent=1))
 print("wrote", out)
