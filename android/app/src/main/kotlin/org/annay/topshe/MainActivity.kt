@@ -16,10 +16,8 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.view.View
 import android.widget.Button
-import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.SeekBar
 import android.widget.TextView
 import java.io.File
 
@@ -64,22 +62,16 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (::status.isInitialized) refresh()
+        metal?.setRunning(true)
     }
 
     private fun hasMic() = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
     // ---------- UI ----------
 
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-
-    private fun heading(t: String) = TextView(this).apply {
-        text = t; textSize = 17f; setTypeface(typeface, Typeface.BOLD); setPadding(0, dp(18), 0, dp(4))
-    }
-
-    private fun note(t: String) = TextView(this).apply { text = t; textSize = 13f; alpha = 0.75f }
-
-    private fun button(t: String, onClick: () -> Unit) = Button(this).apply { text = t; setOnClickListener { onClick() } }
-    private fun buttonV(t: String, onClick: (View) -> Unit) = Button(this).apply { text = t; setOnClickListener { onClick(it) } }
+    private lateinit var kit: Kit
+    private var metal: MetalBackground? = null
+    private lateinit var statusDot: View
 
     private fun sttLabel() = "Speech language: " + if (prefs.sttLanguage == "en") "English (tap for auto: Hindi/Bengali too)" else "Auto-detect (tap for English only)"
 
@@ -93,102 +85,131 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    override fun onPause() {
+        super.onPause()
+        metal?.setRunning(false)
+    }
+
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN || ev.actionMasked == android.view.MotionEvent.ACTION_MOVE)
+            metal?.touch(ev.x, ev.y)
+        return super.dispatchTouchEvent(ev)
+    }
+
     private fun buildUi() {
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(18), dp(18), dp(40)) }
+        kit = Kit(this)
+        val k = kit
+        window.statusBarColor = Look.BG
+        window.navigationBarColor = Look.BG
 
-        col.addView(TextView(this).apply { text = "Topshe"; textSize = 28f; setTypeface(typeface, Typeface.BOLD) })
-        status = TextView(this).apply { textSize = 15f; setPadding(0, dp(6), 0, dp(6)) }
-        col.addView(status)
-        startBtn = button("Start listening") { toggle() }
-        col.addView(startBtn)
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(k.dp(18), k.dp(28), k.dp(18), k.dp(48))
+        }
 
-        col.addView(heading("1. Permissions"))
-        col.addView(note("Mic, notifications, contacts, calls and SMS. Then allow 'Display over other apps' (needed to open alarms, apps and calls from the background) and unrestricted battery (so Realme doesn't kill Topshe)."))
-        col.addView(button("Allow permissions") { askPermissions() })
-        col.addView(button("Allow display over other apps") {
+        // Header: wordmark + status
+        col.addView(k.wordmark("TOPSHE"))
+        col.addView(k.text("YOUR VOICE. YOUR ASSISTANT.", 12f, Look.MUTED, Look.semibold).apply { letterSpacing = 0.22f })
+        val top = k.card(null)
+        val statusRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL }
+        statusDot = k.dot(Look.OFF)
+        status = k.text("", 15f, Look.TEXT)
+        statusRow.addView(statusDot)
+        statusRow.addView(status, LinearLayout.LayoutParams(0, -2, 1f))
+        top.addView(statusRow)
+        startBtn = k.primary("Start listening") { toggle() }
+        top.addView(startBtn)
+        col.addView(top)
+
+        val c1 = k.card("Permissions", "1")
+        c1.addView(k.text("Mic, notifications, contacts, calls and SMS. Then allow 'Display over other apps' (needed to open alarms, apps and calls from the background) and unrestricted battery (so Realme doesn't kill Topshe)."))
+        c1.addView(k.button("Allow permissions") { askPermissions() })
+        c1.addView(k.button("Allow display over other apps") {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
         })
-        col.addView(button("Allow background battery use") { askBattery() })
+        c1.addView(k.button("Allow background battery use") { askBattery() })
+        col.addView(c1)
 
-        col.addView(heading("2. Voice models"))
-        col.addView(note("Wake word, voice check and Whisper speech-to-text. Free and open source, about 330 MB to download once (use Wi-Fi)."))
-        col.addView(button("Download voice models") { downloadVoiceModels() })
-        dlStatus = note(if (Store.voiceModelsReady(this)) "Voice models ready." else "Not downloaded yet.").apply { alpha = 1f }
-        col.addView(dlStatus)
+        val c2 = k.card("Voice models", "2")
+        c2.addView(k.text("Wake word, voice check and Whisper speech-to-text. Free and open source, about 240 MB to download once (use Wi-Fi)."))
+        c2.addView(k.button("Download voice models") { downloadVoiceModels() })
+        dlStatus = k.text(if (Store.voiceModelsReady(this)) "Voice models ready." else "Not downloaded yet.", 13f, Look.TEXT)
+            .apply { setPadding(0, k.dp(10), 0, 0) }
+        c2.addView(dlStatus)
+        col.addView(c2)
 
-        col.addView(heading("3. Teach it your voice"))
-        col.addView(note("Tap, then talk normally for 25 seconds in a quiet room - read anything out loud. Only this voice will be able to use Topshe."))
-        col.addView(button("Record my voice") { enrollVoice() })
+        val c3 = k.card("Teach it your voice", "3")
+        c3.addView(k.text("Tap, then talk normally for 25 seconds in a quiet room - read anything out loud. Only this voice will be able to use Topshe."))
+        c3.addView(k.button("Record my voice") { enrollVoice() })
+        col.addView(c3)
 
-        col.addView(heading("4. Tuning"))
-        col.addView(slider("Voice check strictness", prefs.voiceThreshold, 0.10f, 0.90f) { prefs.voiceThreshold = it })
-        col.addView(note("Higher = stricter. If Topshe ignores you, lower it. The log below shows your score each time."))
-        col.addView(slider("Wake word strictness", prefs.wakeStrictness, 0.05f, 0.60f) { prefs.wakeStrictness = it })
-        col.addView(note("Lower = wakes more easily (but more false wakes). Restart listening after changing."))
-        val spell = EditText(this).apply { setText(prefs.wakeSpellings) }
-        col.addView(note("Wake word spellings (comma separated). Add how 'Topshe' sounds to you, e.g. TOP SHAY."))
-        col.addView(spell)
-        col.addView(button("Save spellings") {
+        val c4 = k.card("Tuning", "4")
+        c4.addView(k.slider("Voice check strictness", prefs.voiceThreshold, 0.10f, 0.90f) { prefs.voiceThreshold = it })
+        c4.addView(k.text("Higher = stricter. If Topshe ignores you, lower it. The log below shows your score each time.", 13f))
+        c4.addView(k.slider("Wake word strictness", prefs.wakeStrictness, 0.05f, 0.60f) { prefs.wakeStrictness = it })
+        c4.addView(k.text("Lower = wakes more easily (but more false wakes). Restart listening after changing.", 13f))
+        c4.addView(k.text("Wake word spellings (comma separated). Add how 'Topshe' sounds to you, e.g. TOP SHAY.", 13f).apply { setPadding(0, k.dp(12), 0, 0) })
+        val spell = k.input("TOPSHE", prefs.wakeSpellings)
+        c4.addView(spell)
+        c4.addView(k.button("Save spellings") {
             prefs.wakeSpellings = spell.text.toString()
             val lines = runCatching { VoiceModels.keywordLines(this, prefs.wakeSpellings) }.getOrDefault(emptyList())
             status.text = if (lines.isEmpty()) "Saved. (Download voice models first to check them.)" else "Saved ${lines.size} spelling(s). Restart listening."
         })
+        col.addView(c4)
 
-        col.addView(heading("5. Brain and learning"))
-        col.addView(note("Topshe learns from everything you say. Once a week it retrains itself and the phone downloads the new brain on Wi-Fi, only if it scored better in tests. Needs a GitHub token: github.com -> Settings -> Developer settings -> Fine-grained tokens -> only the Topshe-v2 repo -> Contents: Read and write."))
-        val token = EditText(this).apply {
-            hint = "Paste GitHub token"; setText(prefs.githubToken)
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
-        }
-        col.addView(token)
-        col.addView(button("Save token and sync now") {
+        val c5 = k.card("Brain and learning", "5")
+        c5.addView(k.text("Topshe learns from everything you say. Once a week it retrains itself and the phone downloads the new brain on Wi-Fi, only if it scored better in tests. Needs a GitHub token: github.com -> Settings -> Developer settings -> Fine-grained tokens -> only the Topshe-v2 repo -> Contents: Read and write."))
+        val token = k.input("Paste GitHub token", prefs.githubToken, secret = true)
+        c5.addView(token)
+        c5.addView(k.button("Save token and sync now") {
             prefs.githubToken = token.text.toString()
             Sync.schedule(this)
             background("Syncing...") { Sync.runSync(this) { setStatus(it) } }
         })
-        col.addView(button("Go back one brain (re-downloads 2.7 GB, use Wi-Fi)") {
+        c5.addView(k.button("Go back one brain (re-downloads 2.7 GB, use Wi-Fi)") {
             background("Going back...") { Sync.rollback(this) { setStatus(it) } }
         })
-        col.addView(button("Speed test (picks the fastest setting)") {
+        c5.addView(k.button("Speed test (picks the fastest setting)") {
             background("Testing speed... (takes about a minute)") { Brain.speedTest(this, Memory(this).facts()) }
         })
-        col.addView(note("Before the first weekly brain arrives, you can use the older v2 model:"))
-        col.addView(button("Pick older model (topshe_v2.gguf)") { pick(PICK_GGUF) })
-        col.addView(buttonV(sttLabel()) { b ->
+        c5.addView(k.text("Before the first weekly brain arrives, you can use the older v2 model:", 13f).apply { setPadding(0, k.dp(12), 0, 0) })
+        c5.addView(k.button("Pick older model (topshe_v2.gguf)") { pick(PICK_GGUF) })
+        c5.addView(k.buttonV(sttLabel()) { b ->
             prefs.sttLanguage = if (prefs.sttLanguage == "en") "" else "en"
             (b as Button).text = sttLabel()
             status.text = "Restart listening to apply."
         })
+        col.addView(c5)
 
-        col.addView(heading("What Topshe knows about you"))
-        facts = TextView(this).apply { textSize = 13f; setTextIsSelectable(true) }
-        col.addView(facts)
-        col.addView(note("Say \"Topshe, remember that ...\" to add, \"Topshe, forget ...\" to remove. If Topshe gets something wrong, say \"no, I meant ...\" and it won't make that mistake again."))
+        val c6 = k.card("What Topshe knows about you")
+        facts = k.text("", 14f, Look.TEXT).apply { setTextIsSelectable(true) }
+        c6.addView(facts)
+        c6.addView(k.text("Say \"Topshe, remember that ...\" to add, \"Topshe, forget ...\" to remove. If Topshe gets something wrong, say \"no, I meant ...\" and it won't make that mistake again.", 13f).apply { setPadding(0, k.dp(10), 0, 0) })
+        col.addView(c6)
 
-        col.addView(heading("Activity"))
-        col.addView(button("Refresh") { refresh() })
-        log = TextView(this).apply { textSize = 12f; typeface = Typeface.MONOSPACE; setTextIsSelectable(true) }
-        col.addView(log)
+        val c7 = k.card("Activity")
+        c7.addView(k.button("Refresh") { refresh() })
+        log = k.text("", 12f, Look.FAINT, Typeface.MONOSPACE).apply { setTextIsSelectable(true); setPadding(0, k.dp(10), 0, 0) }
+        c7.addView(log)
+        col.addView(c7)
 
-        setContentView(ScrollView(this).apply { addView(col) })
-        refresh()
-    }
-
-    private fun slider(label: String, value: Float, lo: Float, hi: Float, save: (Float) -> Unit): View {
-        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val t = TextView(this).apply { text = "$label: %.2f".format(value) }
-        val bar = SeekBar(this).apply {
-            max = 100; progress = (((value - lo) / (hi - lo)) * 100).toInt().coerceIn(0, 100)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
-                    val v = lo + (hi - lo) * p / 100f; t.text = "$label: %.2f".format(v); if (fromUser) save(v)
-                }
-                override fun onStartTrackingTouch(s: SeekBar?) {}
-                override fun onStopTrackingTouch(s: SeekBar?) {}
-            })
+        // Liquid-metal background behind everything (rendered at 1/3 size, scaled up)
+        val dm = resources.displayMetrics
+        val bg = MetalBackground(this)
+        metal = bg
+        val root = android.widget.FrameLayout(this).apply { setBackgroundColor(Look.BG) }
+        root.addView(bg, android.widget.FrameLayout.LayoutParams(
+            (dm.widthPixels / MetalBackground.SCALE).toInt() + 2, (dm.heightPixels / MetalBackground.SCALE).toInt() + 40))
+        val scroll = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            addView(col)
+            setOnScrollChangeListener { _, _, y, _, _ -> bg.scrolled(y) }
         }
-        box.addView(t); box.addView(bar)
-        return box
+        root.addView(scroll, android.widget.FrameLayout.LayoutParams(-1, -1))
+        setContentView(root)
+        bg.setRunning(true)
+        refresh()
     }
 
     private fun setStatus(s: String) = runOnUiThread { status.text = s }
@@ -203,6 +224,11 @@ class MainActivity : Activity() {
             else -> "On - say \"Topshe\"."
         }
         startBtn.text = if (s == ListenerService.State.OFF || s == ListenerService.State.PAUSED) "Start listening" else "Stop (kill)"
+        if (::statusDot.isInitialized) (statusDot.background as android.graphics.drawable.GradientDrawable).setColor(when {
+            missing.isNotEmpty() || s == ListenerService.State.OFF -> Look.OFF
+            s == ListenerService.State.PAUSED -> Look.PAUSED
+            else -> Look.ON
+        })
         log.text = ActivityLog.read(this)
         val mem = Memory(this)
         val f = mem.facts()

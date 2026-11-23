@@ -9,6 +9,10 @@ adb install -r -g "$APK" || { echo "RESULT: INSTALL FAILED"; exit 1; }
 adb logcat -c
 adb shell am start -n "$PKG/org.annay.topshe.MainActivity"
 sleep 10
+adb exec-out screencap -p > screen_1_start.png
+adb shell input swipe 500 1500 500 600 400; sleep 2
+adb exec-out screencap -p > screen_2_scrolled.png
+adb shell input swipe 500 600 500 1500 400; sleep 2
 
 find_and_tap() {
   for i in $(seq 1 10); do
@@ -29,6 +33,7 @@ for i in $(seq 1 150); do
   if adb logcat -d -s Topshe:I | grep -q "Voice models ready"; then echo "RESULT: SUCCESS"; break; fi
   if adb logcat -d | grep -q "Voice model download failed\|FATAL EXCEPTION"; then echo "RESULT: FAILED"; break; fi
 done
+adb exec-out screencap -p > screen_3_after.png
 echo "----- full log -----"
 adb logcat -d -s Topshe:I AndroidRuntime:E System.err:W | tail -120
 adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb pull /sdcard/ui.xml ui.xml >/dev/null 2>&1
