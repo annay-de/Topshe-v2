@@ -66,7 +66,7 @@ object Sync {
     private fun HttpURLConnection.body(): String =
         (if (responseCode < 400) inputStream else errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
 
-    private fun getJson(prefs: Prefs, path: String): Any? {
+    fun getJson(prefs: Prefs, path: String): Any? {
         val c = conn(prefs, path)
         val code = c.responseCode
         if (code == 404) return null
@@ -91,7 +91,7 @@ object Sync {
     }
 
     /** Release assets of a private repo: ask GitHub, then follow its redirect WITHOUT our token. */
-    private fun openAsset(prefs: Prefs, assetApiUrl: String): InputStream {
+    fun openAsset(prefs: Prefs, assetApiUrl: String): InputStream {
         val c = conn(prefs, assetApiUrl)
         c.setRequestProperty("Accept", "application/octet-stream")
         c.instanceFollowRedirects = false
@@ -227,12 +227,12 @@ object Sync {
             .onFailure { Brain.unload() }
     }
 
-    private fun notify(ctx: Context, text: String) {
+    private fun notify(ctx: Context, text: String, id: Int = 42) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel("topshe_updates", "Topshe updates", NotificationManager.IMPORTANCE_DEFAULT))
-        nm.notify(42, android.app.Notification.Builder(ctx, "topshe_updates")
+        nm.notify(id, android.app.Notification.Builder(ctx, "topshe_updates")
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentTitle("Topshe learned").setContentText(text).setAutoCancel(true).build())
+            .setContentTitle("Topshe").setContentText(text).setAutoCancel(true).build())
     }
 
     /** Full sync. Brain downloads only happen on unmetered (Wi-Fi) networks. */
@@ -245,6 +245,10 @@ object Sync {
         val metered = ctx.getSystemService(ConnectivityManager::class.java).isActiveNetworkMetered
         if (metered) out.append("On mobile data: brain download waits for Wi-Fi.")
         else runCatching { updateBrain(ctx, null, progress) }.onSuccess { out.append(it) }.onFailure { out.append("Brain check failed: ${it.message}") }
+        runCatching { Updater.available(ctx) }.getOrNull()?.let { n ->
+            out.append("\nApp build $n is available: open Topshe and tap Update the app.")
+            notify(ctx, "App build $n is ready. Open Topshe and tap Update the app.", 43)
+        }
         return out.toString().trim()
     }
 }

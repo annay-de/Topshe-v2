@@ -182,6 +182,17 @@ class MainActivity : Activity() {
         })
         col.addView(c5)
 
+        val c8 = k.card("App updates")
+        c8.addView(k.text("New versions come from your GitHub Releases. Topshe downloads them and Android asks you to confirm - no browser, no need to switch Play Protect off."))
+        c8.addView(k.button("Update the app") {
+            if (!Updater.canInstall(this)) {
+                status.text = "Allow Topshe to install updates, then come back and tap again."
+                startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+            } else background("Checking for a new app build...") { Updater.downloadAndInstall(this) { setStatus(it) } }
+        })
+        c8.addView(k.text("This is build ${runCatching { Updater.installedBuild(this) }.getOrDefault(0)}.", 13f).apply { setPadding(0, k.dp(10), 0, 0) })
+        col.addView(c8)
+
         val c6 = k.card("What Topshe knows about you")
         facts = k.text("", 14f, Look.TEXT).apply { setTextIsSelectable(true) }
         c6.addView(facts)
