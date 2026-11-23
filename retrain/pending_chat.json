@@ -1,0 +1,8 @@
+{
+ "status": "training",
+ "started": "2026-11-23T21:18:06+00:00",
+ "started_ts": 1795468686.212913,
+ "kernel": "annayde/topshe-chat-trainer",
+ "interactions": 0,
+ "role": "chat"
+}
