@@ -43,6 +43,11 @@ jobs:
           done
           curl -sL https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-base.tar.bz2 | tar tjf - | sed 's/^/STTFILE /'
 
+      - name: Make the app icon from branding/icon.png (change that picture to change the icon)
+        run: |
+          pip install -q pillow
+          python android/tools/make_icons.py branding android/app/src/main/res
+
       - name: Unpack the permanent signing key (from repo Secrets)
         env:
           KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}

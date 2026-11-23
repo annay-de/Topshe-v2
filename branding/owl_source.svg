@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <filter id="paper" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="3" seed="7" result="n"/>
+      <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.45  0 0 0 0 0.33  0 0 0 0 0.18  0 0 0 0.16 0" result="grain"/>
+      <feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="2" seed="3" result="m"/>
+      <feColorMatrix in="m" type="matrix" values="0 0 0 0 0.55  0 0 0 0 0.40  0 0 0 0 0.22  0 0 0 0.22 0" result="blotch"/>
+      <feMerge><feMergeNode in="SourceGraphic"/><feMergeNode in="blotch"/><feMergeNode in="grain"/></feMerge>
+    </filter>
+    <filter id="ink" x="-5%" y="-5%" width="110%" height="110%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="11" result="t"/>
+      <feDisplacementMap in="SourceGraphic" in2="t" scale="9" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <pattern id="hatch" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(38)">
+      <rect width="14" height="14" fill="#5A3A24"/>
+      <line x1="0" y1="0" x2="0" y2="14" stroke="#2A170C" stroke-width="6"/>
+    </pattern>
+    <radialGradient id="vig" cx="0.5" cy="0.5" r="0.7">
+      <stop offset="0.6" stop-color="#000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#5A3A1E" stop-opacity="0.35"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="#EFE1C3" filter="url(#paper)"/>
+  <rect width="1024" height="1024" fill="url(#vig)"/>
+  <g filter="url(#ink)" stroke="#2A170C" stroke-linecap="round" stroke-linejoin="round">
+    <!-- branch -->
+    <path d="M150,812 C330,790 600,800 880,770" fill="none" stroke-width="22"/>
+    <path d="M760,782 C800,740 830,720 880,712" fill="none" stroke-width="12"/>
+    <!-- body with ear tufts -->
+    <path d="M512,190 C560,190 600,150 655,118 C650,175 660,215 690,250
+             C780,330 805,470 790,580 C772,720 660,800 512,800
+             C364,800 252,720 234,580 C219,470 244,330 334,250
+             C364,215 374,175 369,118 C424,150 464,190 512,190 Z"
+          fill="url(#hatch)" stroke-width="14"/>
+    <!-- belly -->
+    <path d="M512,470 C600,470 660,540 660,630 C660,720 600,770 512,770 C424,770 364,720 364,630 C364,540 424,470 512,470 Z"
+          fill="#EFE1C3" stroke-width="10"/>
+    <g fill="none" stroke-width="7">
+      <path d="M440,560 l22,22 l22,-22"/><path d="M500,560 l22,22 l22,-22"/><path d="M560,560 l22,22 l22,-22"/>
+      <path d="M410,625 l22,22 l22,-22"/><path d="M470,625 l22,22 l22,-22"/><path d="M530,625 l22,22 l22,-22"/><path d="M590,625 l22,22 l22,-22"/>
+      <path d="M440,690 l22,22 l22,-22"/><path d="M500,690 l22,22 l22,-22"/><path d="M560,690 l22,22 l22,-22"/>
+    </g>
+    <!-- face disc -->
+    <path d="M512,265 C610,255 700,300 712,370 C722,440 640,470 590,455 C560,447 535,470 512,500
+             C489,470 464,447 434,455 C384,470 302,440 312,370 C324,300 414,255 512,265 Z"
+          fill="#F6EBD3" stroke-width="10"/>
+    <!-- eyes: one a little bigger (curious tilt) -->
+    <circle cx="420" cy="370" r="62" fill="#FFF8E8" stroke-width="12"/>
+    <circle cx="608" cy="365" r="70" fill="#FFF8E8" stroke-width="12"/>
+    <circle cx="438" cy="358" r="27" fill="#2A170C" stroke="none"/>
+    <circle cx="628" cy="350" r="31" fill="#2A170C" stroke="none"/>
+    <circle cx="448" cy="348" r="8" fill="#FFF8E8" stroke="none"/>
+    <circle cx="640" cy="339" r="9" fill="#FFF8E8" stroke="none"/>
+    <!-- one raised brow -->
+    <path d="M556,276 C590,258 630,262 662,282" fill="none" stroke-width="10"/>
+    <!-- beak -->
+    <path d="M512,410 L540,440 L512,492 L484,440 Z" fill="#C98B3A" stroke-width="9"/>
+    <!-- wings -->
+    <path d="M262,500 C230,580 250,680 318,740" fill="none" stroke-width="10"/>
+    <path d="M762,500 C794,580 774,680 706,740" fill="none" stroke-width="10"/>
+    <!-- feet -->
+    <g fill="none" stroke-width="12">
+      <path d="M450,790 l-18,34"/><path d="M462,792 l0,36"/><path d="M474,790 l18,34"/>
+      <path d="M550,790 l-18,34"/><path d="M562,792 l0,36"/><path d="M574,790 l18,34"/>
+    </g>
+  </g>
+</svg>
