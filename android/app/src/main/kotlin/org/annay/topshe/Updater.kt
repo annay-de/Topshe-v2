@@ -18,13 +18,13 @@ object Updater {
     fun installedBuild(ctx: Context): Long =
         ctx.packageManager.getPackageInfo(ctx.packageName, 0).longVersionCode
 
-    data class Build(val number: Int, val url: String, val bytes: Long)
+    data class AppBuild(val number: Int, val url: String, val bytes: Long)
 
     /** The newest published app build (number, APK asset API url, size), or null. */
-    fun latest(ctx: Context): Build? {
+    fun latest(ctx: Context): AppBuild? {
         val prefs = Prefs(ctx)
         val rels = Sync.getJson(prefs, "/repos/${prefs.githubRepo}/releases?per_page=100") as? JSONArray ?: return null
-        var best: Build? = null
+        var best: AppBuild? = null
         for (i in 0 until rels.length()) {
             val r = rels.getJSONObject(i)
             val n = r.optString("tag_name").removePrefix("build-").toIntOrNull() ?: continue
@@ -32,7 +32,7 @@ object Updater {
             val assets = r.optJSONArray("assets") ?: continue
             val apk = (0 until assets.length()).map { assets.getJSONObject(it) }
                 .firstOrNull { it.optString("name").endsWith(".apk") } ?: continue
-            if (best == null || n > best.number) best = Build(n, apk.getString("url"), apk.optLong("size"))
+            if (best == null || n > best.number) best = AppBuild(n, apk.getString("url"), apk.optLong("size"))
         }
         return best
     }
