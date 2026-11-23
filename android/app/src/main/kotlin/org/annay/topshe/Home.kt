@@ -42,6 +42,7 @@ class HomeScreen(private val act: Activity, private val k: Kit,
     private var live: TextView? = null          // the answer while it's being written
     private var busy = false
     private var busySince = 0L
+    private var answered = false               // Topshe already replied (it may still be finishing up)
     private var warmed = false
     private var pending: CompletableDeferred<String?>? = null
     private var speaker: Speaker? = null
@@ -132,7 +133,7 @@ class HomeScreen(private val act: Activity, private val k: Kit,
     fun tick() {
         val s = ChatLog.stamp(act)
         if (s != stamp) { stamp = s; render() }
-        if (busy && pending == null && live == null && thinking.text != "Stopping...") {
+        if (busy && pending == null && live == null && !answered && thinking.text != "Stopping...") {
             val secs = (System.currentTimeMillis() - busySince) / 1000
             if (secs >= 2) thinking.text = "Topshe is thinking... ${secs}s  ·  tap to stop"
         }
@@ -157,7 +158,10 @@ class HomeScreen(private val act: Activity, private val k: Kit,
         engine?.let { return it }
         val sp = Speaker(act).apply {
             muted = !prefs.speakTyped
-            echo = { text -> ChatLog.add(act, false, text, "typed"); act.runOnUiThread { tick() } }
+            echo = { text ->
+                ChatLog.add(act, false, text, "typed")
+                act.runOnUiThread { answered = true; thinking.visibility = View.GONE; tick() }
+            }
             partial = { text -> act.runOnUiThread { showLive(text) } }
         }
         speaker = sp
@@ -172,6 +176,7 @@ class HomeScreen(private val act: Activity, private val k: Kit,
         if (busy) { thinking.text = "One moment, still on the last one..."; return }
         busy = true
         busySince = System.currentTimeMillis()
+        answered = false
         ChatLog.add(act, true, t, "typed"); tick()
         thinking.text = "Topshe is thinking..."; thinking.visibility = View.VISIBLE
         val eng = engine()                       // created on the main thread (it starts text-to-speech)
@@ -215,7 +220,7 @@ class HomeScreen(private val act: Activity, private val k: Kit,
             withContext(Dispatchers.Main) { showOptions(question) }
             val r = withTimeoutOrNull(120_000) { d.await() }
             withContext(Dispatchers.Main) {
-                pending = null; options.removeAllViews()
+                pending = null; options.removeAllViews(); answered = false; busySince = System.currentTimeMillis()
                 thinking.text = "Topshe is thinking..."; thinking.visibility = View.VISIBLE
             }
             return r
