@@ -118,7 +118,7 @@ Java_org_annay_topshe_NativeLlama_unload(JNIEnv *, jobject, jlong handle) {
 // prefix: fixed part (cached). suffix: the new part (your words + the reply opener).
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_org_annay_topshe_NativeLlama_generate(JNIEnv *env, jobject, jlong handle, jstring jprefix, jstring jsuffix,
-                                           jint maxTokens, jfloat temp, jint threads) {
+                                           jint maxTokens, jfloat temp, jint threads, jobject listener) {
     std::lock_guard<std::mutex> lk(g_mu);
     g_abort = false;
     std::string out;
@@ -187,13 +187,30 @@ Java_org_annay_topshe_NativeLlama_generate(JNIEnv *env, jobject, jlong handle, j
                 llama_sampler_chain_add(smpl, llama_sampler_init_temp(temp));
                 llama_sampler_chain_add(smpl, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
             }
+            // Streaming: each new piece goes to listener.onPiece(bytes) so the screen and voice can start early
+            jmethodID on_piece = nullptr;
+            if (listener) {
+                jclass cls = env->GetObjectClass(listener);
+                on_piece = env->GetMethodID(cls, "onPiece", "([B)V");
+                env->DeleteLocalRef(cls);
+                if (env->ExceptionCheck()) { env->ExceptionClear(); on_piece = nullptr; }
+            }
             llama_token tok = 0;
             for (int i = 0; i < maxTokens && !g_abort.load(); i++) {
                 tok = llama_sampler_sample(smpl, e->ctx, -1);
                 if (llama_vocab_is_eog(vocab, tok)) break;
                 char buf[256];
                 int len = llama_token_to_piece(vocab, tok, buf, sizeof(buf), 0, false);
-                if (len > 0) out.append(buf, len);
+                if (len > 0) {
+                    out.append(buf, len);
+                    if (on_piece) {
+                        jbyteArray piece = env->NewByteArray(len);
+                        env->SetByteArrayRegion(piece, 0, len, (const jbyte *) buf);
+                        env->CallVoidMethod(listener, on_piece, piece);
+                        env->DeleteLocalRef(piece);
+                        if (env->ExceptionCheck()) { env->ExceptionClear(); on_piece = nullptr; }
+                    }
+                }
                 n_gen++;
                 if (llama_decode(e->ctx, llama_batch_get_one(&tok, 1)) != 0) break;
             }

@@ -8,7 +8,10 @@ object NativeLlama {
     init { System.loadLibrary("topshe_llama") }
     external fun load(path: String): Long
     external fun unload(handle: Long)
-    external fun generate(handle: Long, prefix: String, suffix: String, maxTokens: Int, temp: Float, threads: Int): ByteArray
+    external fun generate(handle: Long, prefix: String, suffix: String, maxTokens: Int, temp: Float, threads: Int,
+                          listener: Listener?): ByteArray
+    /** Gets each new piece of the answer as it's written (UTF-8 bytes; a letter may be split across pieces). */
+    fun interface Listener { fun onPiece(bytes: ByteArray) }
     external fun abort()
     external fun stats(): String
 }
@@ -135,7 +138,8 @@ object Brain {
     /** Splits the template at {USER}: the part before is cached, only the rest is new each time.
      *  Synchronized with load/unload: the chat screen and the listener can't free it mid-answer. */
     @Synchronized
-    private fun run(system: String, user: String, maxTokens: Int, temp: Float, chat: Boolean = false): String {
+    private fun run(system: String, user: String, maxTokens: Int, temp: Float, chat: Boolean = false,
+                    onText: ((String) -> Unit)? = null): String {
         val ch = if (chat) chatEngine() else 0L
         val h = if (ch != 0L) ch else handle
         if (h == 0L) return ""
@@ -144,12 +148,23 @@ object Brain {
         val cut = full.indexOf("{USER}")
         val prefix = full.substring(0, cut)
         val suffix = user + full.substring(cut + "{USER}".length)
-        val out = String(NativeLlama.generate(h, prefix, suffix, maxTokens, temp, threads), Charsets.UTF_8)
-            .replace(Regex("(?s)<think>.*?</think>"), "").trim()
+        val listener = onText?.let { cb ->
+            val sofar = java.io.ByteArrayOutputStream()
+            NativeLlama.Listener { bytes ->
+                sofar.write(bytes)
+                val t = clean(String(sofar.toByteArray(), Charsets.UTF_8).trimEnd('\uFFFD'))
+                if (t.isNotEmpty()) runCatching { cb(t) }
+            }
+        }
+        val out = clean(String(NativeLlama.generate(h, prefix, suffix, maxTokens, temp, threads, listener), Charsets.UTF_8))
         lastStats = (if (ch != 0L) "chat " else "") + runCatching { NativeLlama.stats() }.getOrDefault("")
         android.util.Log.i("Topshe", lastStats)
         return out
     }
+
+    /** The visible answer: no thinking block (a half-written one hides everything after it). */
+    private fun clean(s: String): String =
+        s.replace(Regex("(?s)<think>.*?</think>"), "").replace(Regex("(?s)<think>.*$"), "").trim()
 
     /** Processes the fixed instructions once in advance, so the first real request is quicker. */
     fun warmUp(facts: List<String>) {
@@ -161,8 +176,8 @@ object Brain {
     fun command(text: String, facts: List<String>): JSONObject? =
         parseJson(run(withFacts(if (legacy) LEGACY_CMD_SYSTEM else CMD_SYSTEM, facts), text, 96, 0f))
 
-    fun chat(question: String, facts: List<String>): String =
-        run(withFacts(CHAT_SYSTEM, facts), question, 120, 0.6f, chat = true)
+    fun chat(question: String, facts: List<String>, onText: ((String) -> Unit)? = null): String =
+        run(withFacts(CHAT_SYSTEM, facts), question, 120, 0.6f, chat = true, onText = onText)
             .ifBlank { "Sorry, I don't have an answer for that." }
 
     /** Lenient: finds the first balanced {...} in the output. */

@@ -56,11 +56,14 @@ class Actions(private val ctx: Context, private val speaker: Speaker,
                 outcome = "chat"
                 val q = a.optString("query").ifBlank { heard }
                 val quick = QuickRules.reply(q)
-                val answer = quick ?: Brain.chat(q, memory.facts()).also {
+                if (quick != null) speaker.say(quick)
+                else {
+                    speaker.streamStart()            // shows and speaks the answer while it's being written
+                    val answer = Brain.chat(q, memory.facts()) { speaker.streamUpdate(it) }
                     if (Brain.lastStats.isNotBlank()) ActivityLog.add(ctx, Brain.lastStats)
+                    if (Brain.wasStopped) { speaker.streamCancel(); return Result(true, "cancelled") }
+                    speaker.streamEnd(answer)
                 }
-                if (quick == null && Brain.wasStopped) return Result(true, "cancelled")
-                speaker.say(answer)
             }
             else -> { outcome = "failed"; speaker.say("Sorry, I didn't understand that.") }
         }

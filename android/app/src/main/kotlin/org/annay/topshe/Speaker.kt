@@ -19,6 +19,7 @@ class Speaker(ctx: Context) : TextToSpeech.OnInitListener {
     private var hasBengali = false
     private var current: Locale? = null
     private val ready = CompletableDeferred<Boolean>()
+    @Volatile private var isReady = false
     private val pending = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
     private val tts = TextToSpeech(ctx.applicationContext, this)
     private val tone = runCatching { ToneGenerator(AudioManager.STREAM_NOTIFICATION, 70) }.getOrNull()
@@ -36,7 +37,8 @@ class Speaker(ctx: Context) : TextToSpeech.OnInitListener {
                 override fun onError(id: String?) { id?.let { pending.remove(it)?.complete(Unit) } }
             })
         }
-        ready.complete(status == TextToSpeech.SUCCESS)
+        isReady = status == TextToSpeech.SUCCESS
+        ready.complete(isReady)
     }
 
     /** Gets every reply as text too (for the chat screen). */
@@ -57,6 +59,58 @@ class Speaker(ctx: Context) : TextToSpeech.OnInitListener {
         if (want != current) { tts.setLanguage(want); current = want }
         tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
         withTimeoutOrNull(30_000) { done.await() }
+    }
+
+    // ---------- streaming: speak each sentence as soon as the brain has written it ----------
+
+    /** The answer so far, for the chat screen ("" = clear it). */
+    @Volatile var partial: ((String) -> Unit)? = null
+    private var streamSpoken = 0
+    private val streamDone = mutableListOf<CompletableDeferred<Unit>>()
+
+    fun streamStart() { synchronized(streamDone) { streamSpoken = 0; streamDone.clear() } }
+
+    /** Called with the answer so far (from the brain's thread). */
+    fun streamUpdate(sofar: String) {
+        partial?.invoke(sofar)
+        if (muted || !isReady) return
+        synchronized(streamDone) {
+            val end = Regex("[.!?।]+[\"')]*\\s|\\n").findAll(sofar).map { it.range.last + 1 }.lastOrNull { it > streamSpoken } ?: return
+            queue(sofar.substring(streamSpoken, end))
+            streamSpoken = end
+        }
+    }
+
+    /** The full answer: shows it, speaks what's left, and waits until everything was said. */
+    suspend fun streamEnd(full: String) {
+        partial?.invoke("")
+        echo?.invoke(full)
+        if (muted || !ready.await()) return
+        val waits = synchronized(streamDone) {
+            val rest = if (full.length > streamSpoken) full.substring(streamSpoken) else ""
+            if (rest.isNotBlank()) queue(rest)
+            streamSpoken = full.length
+            streamDone.toList()
+        }
+        withTimeoutOrNull(60_000) { waits.forEach { it.await() } }
+    }
+
+    /** Stopped mid-answer: be quiet and clear the half answer. */
+    fun streamCancel() {
+        partial?.invoke("")
+        runCatching { tts.stop() }
+        synchronized(streamDone) { streamDone.forEach { it.complete(Unit) }; streamDone.clear() }
+    }
+
+    private fun queue(text: String) {
+        if (text.isBlank()) return
+        val id = UUID.randomUUID().toString()
+        val done = CompletableDeferred<Unit>()
+        pending[id] = done
+        streamDone += done
+        val want = if (hasBengali && Hearing.hasBengali(text)) bengali else english
+        if (want != current) { tts.setLanguage(want); current = want }
+        tts.speak(text.trim(), TextToSpeech.QUEUE_ADD, null, id)
     }
 
     /** Short beep: "I heard Topshe, go ahead". */

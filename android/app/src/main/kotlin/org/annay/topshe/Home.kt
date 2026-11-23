@@ -39,6 +39,7 @@ class HomeScreen(private val act: Activity, private val k: Kit,
     private val options = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
     private val thinking = k.text("Topshe is thinking...", 13f, Look.MUTED).apply { visibility = View.GONE; setPadding(k.dp(4), k.dp(2), 0, k.dp(4)) }
     private var stamp = -1L
+    private var live: TextView? = null          // the answer while it's being written
     private var busy = false
     private var busySince = 0L
     private var warmed = false
@@ -131,7 +132,7 @@ class HomeScreen(private val act: Activity, private val k: Kit,
     fun tick() {
         val s = ChatLog.stamp(act)
         if (s != stamp) { stamp = s; render() }
-        if (busy && pending == null && thinking.text != "Stopping...") {
+        if (busy && pending == null && live == null && thinking.text != "Stopping...") {
             val secs = (System.currentTimeMillis() - busySince) / 1000
             if (secs >= 2) thinking.text = "Topshe is thinking... ${secs}s  ·  tap to stop"
         }
@@ -147,6 +148,7 @@ class HomeScreen(private val act: Activity, private val k: Kit,
 
     private fun render() {
         chatList.removeAllViews()
+        live = null
         ChatLog.recent(act).forEach { m -> chatList.addView(k.bubble(m.fromYou, m.text, m.via == "voice")) }
         scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
     }
@@ -156,6 +158,7 @@ class HomeScreen(private val act: Activity, private val k: Kit,
         val sp = Speaker(act).apply {
             muted = !prefs.speakTyped
             echo = { text -> ChatLog.add(act, false, text, "typed"); act.runOnUiThread { tick() } }
+            partial = { text -> act.runOnUiThread { showLive(text) } }
         }
         speaker = sp
         return ChatEngine(act, sp).also { engine = it }
@@ -181,6 +184,19 @@ class HomeScreen(private val act: Activity, private val k: Kit,
             if (!keep && ListenerService.state != ListenerService.State.OFF) ListenerService.send(act, ListenerService.ACTION_PAUSE)
             tick()
         }
+    }
+
+    /** Shows the answer word by word while the brain writes it. */
+    private fun showLive(text: String) {
+        if (text.isEmpty()) { live?.let { (it.parent as? View)?.let { p -> chatList.removeView(p) } }; live = null; return }
+        val t = live ?: run {
+            val b = k.bubble(false, "", false)
+            chatList.addView(b)
+            ((b as LinearLayout).getChildAt(0) as TextView).also { live = it }
+        }
+        t.text = text
+        thinking.visibility = View.GONE
+        scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
     }
 
     /** Your reply to a question Topshe asked (typed or a tapped button). */
