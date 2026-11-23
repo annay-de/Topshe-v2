@@ -44,9 +44,15 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("brainVersion", 0)
         set(v) = sp.edit().putInt("brainVersion", v).apply()
 
-    var previousBrainVersion: Int
-        get() = sp.getInt("previousBrainVersion", 0)
-        set(v) = sp.edit().putInt("previousBrainVersion", v).apply()
+    /** After "go back one brain", don't auto-install this version (or older) again. */
+    var skipVersion: Int
+        get() = sp.getInt("skipVersion", 0)
+        set(v) = sp.edit().putInt("skipVersion", v).apply()
+
+    /** Seed facts (e.g. from your Claude export) already added once, so forgotten ones don't come back. */
+    var appliedSeeds: Set<String>
+        get() = sp.getStringSet("appliedSeeds", emptySet()) ?: emptySet()
+        set(v) = sp.edit().putStringSet("appliedSeeds", v).apply()
 
     /** How many lines of the interaction log have been uploaded already. */
     var uploadedLines: Int
@@ -62,9 +68,7 @@ class Prefs(ctx: Context) {
 /** Where Topshe keeps its files (all inside the app's private storage). */
 object Store {
     fun brain(ctx: Context) = File(ctx.filesDir, "topshe_brain.gguf")              // weekly brain (Qwen 3.5 4B)
-    fun previousBrain(ctx: Context) = File(ctx.filesDir, "topshe_brain_prev.gguf")
     fun promptTemplate(ctx: Context) = File(ctx.filesDir, "prompt_template.json")
-    fun previousPromptTemplate(ctx: Context) = File(ctx.filesDir, "prompt_template_prev.json")
     fun model(ctx: Context) = File(ctx.filesDir, "topshe.gguf")                    // older v2 model (fallback)
     fun sttModel(ctx: Context) = File(ctx.filesDir, "whisper")
     fun wakeModel(ctx: Context) = File(ctx.filesDir, "kws")

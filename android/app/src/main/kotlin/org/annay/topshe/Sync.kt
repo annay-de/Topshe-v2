@@ -30,7 +30,8 @@ import java.util.concurrent.TimeUnit
  *  1. Uploads what you said + what Topshe did (and your saved facts) to the private `data` branch.
  *  2. Every Sunday the repo retrains Topshe on Kaggle (see training/pipeline.py).
  *  3. Downloads the new brain on Wi-Fi once it has passed its tests, and switches to it.
- *     The previous brain is kept, so you can go back with one tap.
+ *     No backup copy is kept on the phone (saves 2.7 GB): every brain stays in the repo's
+ *     Releases, so "go back one brain" simply re-downloads the previous one.
  */
 object Sync {
     private const val API = "https://api.github.com"
@@ -122,17 +123,17 @@ object Sync {
 
     // ---------------- 2. new brain ----------------
 
-    /** Returns the newest published brain release (tag model-N), or null. */
-    private fun latestBrain(prefs: Prefs): Pair<Int, JSONObject>? {
-        val rels = getJson(prefs, "/repos/${prefs.githubRepo}/releases?per_page=50") as? JSONArray ?: return null
-        var best: Pair<Int, JSONObject>? = null
+    /** All published brains (tag model-N) as version -> release. */
+    private fun brainReleases(prefs: Prefs): Map<Int, JSONObject> {
+        val rels = getJson(prefs, "/repos/${prefs.githubRepo}/releases?per_page=100") as? JSONArray ?: return emptyMap()
+        val out = sortedMapOf<Int, JSONObject>()
         for (i in 0 until rels.length()) {
             val r = rels.getJSONObject(i)
-            val v = r.optString("tag_name").removePrefix("model-").toIntOrNull() ?: continue
-            if (!r.optString("tag_name").startsWith("model-")) continue
-            if (best == null || v > best.first) best = v to r
+            val tag = r.optString("tag_name")
+            if (!tag.startsWith("model-")) continue
+            tag.removePrefix("model-").toIntOrNull()?.let { out[it] = r }
         }
-        return best
+        return out
     }
 
     private fun sha256(f: File): String {
@@ -144,17 +145,21 @@ object Sync {
         return md.digest().joinToString("") { "%02x".format(it) }
     }
 
-    /** Downloads + verifies + installs a newer brain. Returns a short message. */
-    fun updateBrain(ctx: Context, progress: (String) -> Unit = {}): String {
+    /** Downloads + verifies + installs a brain: the newest one, or [target] (used for going back). */
+    fun updateBrain(ctx: Context, target: Int? = null, progress: (String) -> Unit = {}): String {
         val prefs = Prefs(ctx)
-        val (version, rel) = latestBrain(prefs) ?: return "No trained brain published yet."
-        if (version <= prefs.brainVersion && Store.brain(ctx).exists()) return "Brain is up to date (v${prefs.brainVersion})."
+        val all = brainReleases(prefs)
+        if (all.isEmpty()) return "No trained brain published yet."
+        val version = target ?: all.keys.filter { it > prefs.skipVersion }.maxOrNull()
+            ?: return "Staying on brain v${prefs.brainVersion} (you went back; waiting for next week's brain)."
+        val rel = all[version] ?: return "Brain v$version isn't available."
+        if (version == prefs.brainVersion && Store.brain(ctx).exists()) return "Brain is up to date (v$version)."
         val assets = rel.getJSONArray("assets")
         fun asset(name: String): JSONObject? = (0 until assets.length()).map { assets.getJSONObject(it) }.firstOrNull { it.optString("name") == name }
         val manifest = JSONObject(openAsset(prefs, asset("manifest.json")!!.getString("url")).bufferedReader().use { it.readText() })
 
-        // Make room: the brain before the current one isn't needed any more
-        Store.previousBrain(ctx).delete()
+        // Old builds kept a backup copy; it's no longer needed
+        File(ctx.filesDir, "topshe_brain_prev.gguf").delete()
         val tmp = File(ctx.filesDir, "topshe_brain.download")
         tmp.delete()
         val parts = manifest.getJSONArray("parts")
@@ -170,35 +175,51 @@ object Sync {
             tmp.delete()
             return "Download was corrupted; will try again later."
         }
-        // Install: current -> previous, new -> current
-        if (Store.brain(ctx).exists()) {
-            Store.brain(ctx).renameTo(Store.previousBrain(ctx))
-            Store.promptTemplate(ctx).takeIf { it.exists() }?.renameTo(Store.previousPromptTemplate(ctx))
-            prefs.previousBrainVersion = prefs.brainVersion
-        }
+        // Swap in only after the new one is verified. The running brain keeps its open copy until the
+        // listener reloads (deleting an open file is safe on Android), so nothing breaks mid-sentence.
+        Store.brain(ctx).delete()
         tmp.renameTo(Store.brain(ctx))
         Store.promptTemplate(ctx).writeText(manifest.getJSONObject("prompt").toString())
         prefs.brainVersion = version
         reloadBrain(ctx)
         val acc = manifest.optJSONObject("eval")?.optJSONObject("synthetic")?.optDouble("exact")
-        val msg = "New brain v$version installed" + (acc?.let { " (test accuracy %.0f%%)".format(it * 100) } ?: "")
+        val msg = "Brain v$version installed" + (acc?.let { " (test accuracy %.0f%%)".format(it * 100) } ?: "")
         ActivityLog.add(ctx, msg)
         notify(ctx, msg)
         return msg
     }
 
-    /** One tap back to the previous brain (and forward again). */
-    fun swapToPrevious(ctx: Context): String {
+    /** Goes back one brain by re-downloading the previous version from GitHub (Wi-Fi recommended). */
+    fun rollback(ctx: Context, progress: (String) -> Unit = {}): String {
         val prefs = Prefs(ctx)
-        val cur = Store.brain(ctx); val prev = Store.previousBrain(ctx)
-        if (!prev.exists()) return "There's no previous brain on the phone."
-        val tmp = File(ctx.filesDir, "swap.gguf")
-        cur.renameTo(tmp); prev.renameTo(cur); tmp.renameTo(prev)
-        val t = Store.promptTemplate(ctx); val pt = Store.previousPromptTemplate(ctx); val tt = File(ctx.filesDir, "swap.json")
-        t.renameTo(tt); pt.renameTo(t); tt.renameTo(pt)
-        val v = prefs.brainVersion; prefs.brainVersion = prefs.previousBrainVersion; prefs.previousBrainVersion = v
-        reloadBrain(ctx)
-        return "Switched to brain v${prefs.brainVersion}."
+        val older = brainReleases(prefs).keys.filter { it < prefs.brainVersion }.maxOrNull()
+            ?: return "There's no older brain to go back to."
+        val from = prefs.brainVersion
+        val msg = updateBrain(ctx, older, progress)
+        if (prefs.brainVersion == older) prefs.skipVersion = from   // don't auto-reinstall the one you left
+        return msg
+    }
+
+    /** Adds facts from data/seed_facts.json (e.g. from your Claude export) once each. */
+    fun applySeedFacts(ctx: Context): Int {
+        val prefs = Prefs(ctx)
+        val c = conn(prefs, "/repos/${prefs.githubRepo}/contents/data/seed_facts.json?ref=data")
+        c.setRequestProperty("Accept", "application/vnd.github.raw")
+        if (c.responseCode != 200) return 0
+        val arr = JSONObject(c.body()).optJSONArray("facts") ?: return 0
+        val applied = prefs.appliedSeeds.toMutableSet()
+        val mem = Memory(ctx)
+        var added = 0
+        for (i in 0 until arr.length()) {
+            val f = arr.getString(i)
+            val key = Integer.toHexString(f.trim().lowercase().hashCode())
+            if (key in applied) continue
+            if (mem.remember(f)) added++
+            applied += key
+        }
+        prefs.appliedSeeds = applied
+        if (added > 0) ActivityLog.add(ctx, "Added $added facts about you from your import")
+        return added
     }
 
     private fun reloadBrain(ctx: Context) {
@@ -219,10 +240,11 @@ object Sync {
         val prefs = Prefs(ctx)
         if (prefs.githubToken.isBlank()) return "Add your GitHub token first."
         val out = StringBuilder()
+        runCatching { applySeedFacts(ctx) }
         runCatching { upload(ctx) }.onFailure { out.append("Upload failed: ${it.message}\n") }.onSuccess { out.append("Uploaded your data.\n") }
         val metered = ctx.getSystemService(ConnectivityManager::class.java).isActiveNetworkMetered
         if (metered) out.append("On mobile data: brain download waits for Wi-Fi.")
-        else runCatching { updateBrain(ctx, progress) }.onSuccess { out.append(it) }.onFailure { out.append("Brain check failed: ${it.message}") }
+        else runCatching { updateBrain(ctx, null, progress) }.onSuccess { out.append(it) }.onFailure { out.append("Brain check failed: ${it.message}") }
         return out.toString().trim()
     }
 }

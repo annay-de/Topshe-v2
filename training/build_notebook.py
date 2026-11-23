@@ -78,6 +78,14 @@ def held(r): return int(hashlib.md5(r["user"].encode()).hexdigest(), 16) % 100 <
 eval_user = [r for r in mine if held(r)]
 train += [r for r in mine if not held(r)] * USER_UPSAMPLE
 
+# Your own past messages from your Claude export (style only; Claude's replies are never used)
+style_file = next(iter(glob.glob("/kaggle/input/**/claude_messages.jsonl", recursive=True)), None)
+style = []
+if style_file:
+    msgs = [json.loads(l) for l in open(style_file, encoding="utf-8") if l.strip()]
+    style = style_rows(msgs, facts, k=1500, seed=int(time.time()) % 1000)
+    train += style
+
 # General chat so Topshe can still talk normally (some with a memory block it should ignore)
 alpaca = load_dataset("yahma/alpaca-cleaned", split="train").shuffle(seed=int(time.time()) % 1000)
 n_chat = 0
@@ -92,7 +100,7 @@ for r in alpaca:
 random.shuffle(train)
 counts = {k: sum(1 for r in train if r["kind"] == k) for k in sorted({r["kind"] for r in train})}
 print("train:", len(train), counts, "| eval synthetic:", len(eval_synth), "| eval yours:", len(eval_user),
-      "| your interactions:", len(interactions), "| facts:", len(facts))
+      "| your interactions:", len(interactions), "| facts:", len(facts), "| your past messages:", len(style))
 """)
 
 code("""# 5. Load the base model (16-bit LoRA: Unsloth advises against 4-bit training for Qwen 3.5)

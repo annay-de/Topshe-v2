@@ -1,5 +1,6 @@
 import json
 import random
+import re
 
 random.seed(42)
 
@@ -332,6 +333,26 @@ def user_rows(interactions, facts):
         if action.get("action") == "chat":
             continue
         out.append(row(with_facts(CMD_SYSTEM, facts), heard, dumps(action), "user"))
+    return out
+
+
+COMMAND_START = re.compile(r"^(hey |ok )?(topshe )?(play|pause|call|ring|phone|message|text|whatsapp|remind|set|wake|timer|"
+                           r"alarm|open|launch|turn|switch|remember|forget|stop|next|skip|volume|mute)\b", re.I)
+
+
+def style_rows(messages, facts, k=1500, seed=0):
+    """
+    Your own past messages (from your Claude export), labelled as conversation.
+    Teaches Topshe how YOU phrase things (Hinglish, shorthand, typos) so it doesn't mistake
+    your normal talk for a phone command. Messages that look like phone commands are skipped.
+    """
+    rnd = random.Random(seed)
+    pool = [m["text"] for m in messages if m.get("text") and not COMMAND_START.search(m["text"].strip())]
+    rnd.shuffle(pool)
+    out = []
+    for t in pool[:k]:
+        sys_prompt = with_facts(CMD_SYSTEM, facts if rnd.random() < 0.5 else [])
+        out.append(row(sys_prompt, t, dumps({"action": "chat", "query": t}), "style"))
     return out
 
 

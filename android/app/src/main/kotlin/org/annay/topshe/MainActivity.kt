@@ -142,7 +142,9 @@ class MainActivity : Activity() {
             Sync.schedule(this)
             background("Syncing...") { Sync.runSync(this) { setStatus(it) } }
         })
-        col.addView(button("Go back to the previous brain") { background("Switching...") { Sync.swapToPrevious(this) } })
+        col.addView(button("Go back one brain (re-downloads 2.7 GB, use Wi-Fi)") {
+            background("Going back...") { Sync.rollback(this) { setStatus(it) } }
+        })
         col.addView(button("Speed test (picks the fastest setting)") {
             background("Testing speed... (takes about a minute)") { Brain.speedTest(this, Memory(this).facts()) }
         })

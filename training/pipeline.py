@@ -90,6 +90,9 @@ def start():
     for f in sorted(glob.glob(str(DATA / "data" / "interactions" / "*.jsonl"))):
         lines += [l for l in Path(f).read_text(encoding="utf-8").splitlines() if l.strip()]
     (ds / "user_interactions.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    past = DATA / "data" / "claude_import" / "claude_messages.jsonl"
+    if past.exists():
+        shutil.copy(past, ds / "claude_messages.jsonl")
     facts = DATA / "data" / "facts.json"
     (ds / "facts.json").write_text(facts.read_text(encoding="utf-8") if facts.exists() else '{"facts": []}', encoding="utf-8")
     (ds / "dataset-metadata.json").write_text(json.dumps(
