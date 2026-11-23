@@ -254,6 +254,14 @@ class MainActivity : Activity() {
         root.addView(bg, android.widget.FrameLayout.LayoutParams(
             (dm.widthPixels / MetalBackground.SCALE).toInt() + 2, (dm.heightPixels / MetalBackground.SCALE).toInt() + 40))
         root.addView(column, android.widget.FrameLayout.LayoutParams(-1, -1))
+        // Hide the tab bar while the keyboard is open (more room for the chat)
+        root.viewTreeObserver.addOnGlobalLayoutListener {
+            val r = android.graphics.Rect()
+            root.getWindowVisibleDisplayFrame(r)
+            val keyboard = root.rootView.height - r.bottom > root.rootView.height / 4
+            val want = if (keyboard) View.GONE else View.VISIBLE
+            if (bar.visibility != want) bar.visibility = want
+        }
         setContentView(root)
         bg.setRunning(true)
         show(if (Store.missing(this).isEmpty()) 0 else 2)    // first time: straight to setup
