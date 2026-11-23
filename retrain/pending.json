@@ -1,0 +1,7 @@
+{
+ "status": "training",
+ "started": "2026-11-23T08:33:31+00:00",
+ "started_ts": 1795422811.2970507,
+ "kernel": "annayde/topshe-trainer",
+ "interactions": 0
+}
