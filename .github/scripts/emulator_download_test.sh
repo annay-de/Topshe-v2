@@ -72,6 +72,8 @@ if [ -n "$E" ]; then
   adb shell input text "hi"
   find_and_tap "↑"
   sleep 3
+  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb pull /sdcard/ui.xml ui.xml >/dev/null 2>&1
+  E=$(python3 .github/scripts/find_node.py ui.xml --class android.widget.EditText)   # moved up by the keyboard
   adb shell input tap $E; sleep 1
   adb shell input text "what%scan%syou%sdo"
   find_and_tap "↑"
@@ -81,7 +83,7 @@ if [ -n "$E" ]; then
   TXT=$(python3 .github/scripts/find_node.py ui.xml --all)
   echo "$TXT" | grep -q "Hey Annay! What should I do" && echo "CHAT RESULT: HI ANSWERED INSTANTLY" || echo "CHAT RESULT: HI NOT ANSWERED"
   echo "$TXT" | grep -q "I can play music" && echo "CHAT RESULT: HELP ANSWERED INSTANTLY" || echo "CHAT RESULT: HELP NOT ANSWERED"
-  find_and_tap "Play music"
+  find_and_tap "▶ Play music"
   sleep 3
   adb exec-out screencap -p > screen_6_play_chip.png
   adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb pull /sdcard/ui.xml ui.xml >/dev/null 2>&1
