@@ -1,1 +1,103 @@
-
+[{"stream_name":"stderr","time":7.15516027,"data":"/usr/local/lib/python3.13/dist-packages/nbformat/validator.py:434: MissingIDFieldWarning: Cell is missing an id field, this will become a hard error in future nbformat versions. You may want to use `normalize()` on your notebooks before validations (available since nbformat 5.1.4). Previous versions of nbformat are fixing this issue transparently, and will stop doing so in the future.\n"}
+,{"stream_name":"stderr","time":7.155199733,"data":"  _validate(nbdict, ref, version, version_minor, relax_add_props)\n"}
+,{"stream_name":"stderr","time":8.115364147,"data":"0.00s - Debugger warning: It seems that frozen modules are being used, which may\n"}
+,{"stream_name":"stderr","time":8.11539905,"data":"0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off\n"}
+,{"stream_name":"stderr","time":8.115410731,"data":"0.00s - to python to disable frozen modules.\n"}
+,{"stream_name":"stderr","time":8.115413781,"data":"0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.\n"}
+,{"stream_name":"stderr","time":8.723564577,"data":"0.00s - Debugger warning: It seems that frozen modules are being used, which may\n"}
+,{"stream_name":"stderr","time":8.723596222,"data":"0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off\n"}
+,{"stream_name":"stderr","time":8.723599661,"data":"0.00s - to python to disable frozen modules.\n"}
+,{"stream_name":"stderr","time":8.723602134,"data":"0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.\n"}
+,{"stream_name":"stdout","time":45.032753479,"data":"name, memory.total [MiB]\r\n"}
+,{"stream_name":"stdout","time":45.032788037,"data":"Tesla T4, 15360 MiB\r\n"}
+,{"stream_name":"stdout","time":45.032791993,"data":"Tesla T4, 15360 MiB\r\n"}
+,{"stream_name":"stdout","time":46.390418207,"data":"interactions 0 | facts 0 | past messages 2259 | cached chat 674 | last week's scores: False\n"}
+,{"stream_name":"stdout","time":46.885082894,"data":"hearing pool: 2991 items\n"}
+,{"stream_name":"stdout","time":46.885115821,"data":"synthetic 11117 | re-weighted extra 0 | yours 0 | style 1500 | eval: synth 200 bengali 150 yours 0 style 100\n"}
+,{"stream_name":"stdout","time":60.510837897,"data":"🦥 Unsloth: Will patch your computer to enable 2x faster free finetuning.\n"}
+,{"stream_name":"stdout","time":90.987674566,"data":"Unsloth: xformers is installed but cannot load with torch 2.11.0+cu130, so PyTorch attention is used instead.\n"}
+,{"stream_name":"stdout","time":90.987705981,"data":"To install a matching xformers, run `unsloth install-kernels xformers`, or `pip uninstall xformers` to hide this. UNSLOTH_ENABLE_LOGGING=1 shows the full error.\n"}
+,{"stream_name":"stdout","time":90.987712864,"data":"🦥 Unsloth Zoo will now patch everything to make training faster!\n"}
+,{"stream_name":"stdout","time":95.302425393,"data":"==((====))==  Unsloth 2026.11.9: Fast Qwen3_5 patching. Transformers: 5.17.0.\n"}
+,{"stream_name":"stdout","time":95.302455039,"data":"   \\\\   /|    Tesla T4. Num GPUs = 1. Max memory: 14.562 GB. Platform: Linux.\n"}
+,{"stream_name":"stdout","time":95.302460658,"data":"O^O/ \\_/ \\    Torch: 2.11.0+cu130. CUDA: 7.5. CUDA Toolkit: 13.0. Triton: 3.6.0\n"}
+,{"stream_name":"stdout","time":95.302484508,"data":"\\        /    Bfloat16 = FALSE. FA [Xformers = None. FA2 = False]\n"}
+,{"stream_name":"stdout","time":95.302490361,"data":" \"-____-\"     Free license: http://github.com/unslothai/unsloth\n"}
+,{"stream_name":"stdout","time":95.302494783,"data":"Unsloth: Fast downloading is enabled - ignore downloading bars which are red colored!\n"}
+,{"stream_name":"stdout","time":96.421575315,"data":"Unsloth: Using float16 precision for qwen3_5 won't work! Using float32.\n"}
+,{"stream_name":"stderr","time":96.749211697,"data":"/usr/local/lib/python3.13/dist-packages/huggingface_hub/constants.py:302: FutureWarning: The `HF_HUB_ENABLE_HF_TRANSFER` environment variable is deprecated as 'hf_transfer' is not used anymore. Please use `HF_XET_HIGH_PERFORMANCE` instead to enable high performance transfer with Xet. Visit https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables#hfxethighperformance for more details.\n"}
+,{"stream_name":"stderr","time":96.749251561,"data":"  warnings.warn(\n"}
+,{"stream_name":"stderr","time":96.951286041,"data":"/usr/local/lib/python3.13/dist-packages/huggingface_hub/constants.py:302: FutureWarning: The `HF_HUB_ENABLE_HF_TRANSFER` environment variable is deprecated as 'hf_transfer' is not used anymore. Please use `HF_XET_HIGH_PERFORMANCE` instead to enable high performance transfer with Xet. Visit https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables#hfxethighperformance for more details.\n"}
+,{"stream_name":"stderr","time":96.951320642,"data":"  warnings.warn(\n"}
+,{"stream_name":"stderr","time":96.95132483,"data":"\n"}
+,{"stream_name":"stderr","time":96.951341536,"data":"/usr/local/lib/python3.13/dist-packages/huggingface_hub/constants.py:302: FutureWarning: The `HF_HUB_ENABLE_HF_TRANSFER` environment variable is deprecated as 'hf_transfer' is not used anymore. Please use `HF_XET_HIGH_PERFORMANCE` instead to enable high performance transfer with Xet. Visit https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables#hfxethighperformance for more details.\n"}
+,{"stream_name":"stderr","time":96.951347311,"data":"  warnings.warn(\n"}
+,{"stream_name":"stderr","time":97.079935727,"data":"Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n"}
+,{"stream_name":"stderr","time":97.281632458,"data":"Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n"}
+,{"stream_name":"stderr","time":97.281655037,"data":"\n"}
+,{"stream_name":"stderr","time":97.281660264,"data":"Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n"}
+,{"stream_name":"stdout","time":137.262189481,"data":"'\u003c|im_start|\u003esystem\\n{SYSTEM}\u003c|im_end|\u003e\\n\u003c|im_start|\u003euser\\n{USER}\u003c|im_end|\u003e\\n\u003c|im_start|\u003eassistant\\n\u003cthink\u003e\\n\\n\u003c/think\u003e\\n\\n'\n"}
+,{"stream_name":"stdout","time":137.292929109,"data":"Reusing 674 cached chat examples\n"}
+,{"stream_name":"stdout","time":137.292954958,"data":"train rows: 1058 {'chat': 674, 'identity': 264, 'memory_chat': 120}\n"}
+,{"stream_name":"stdout","time":137.872770705,"data":"Dataset({\n"}
+,{"stream_name":"stdout","time":137.872803947,"data":"    features: ['input_ids', 'attention_mask', 'labels'],\n"}
+,{"stream_name":"stdout","time":137.87280968,"data":"    num_rows: 1058\n"}
+,{"stream_name":"stdout","time":137.872814581,"data":"}) | tokens: median 112 max 283\n"}
+,{"stream_name":"stderr","time":138.572135827,"data":"==((====))==  Unsloth - 2x faster free finetuning | Num GPUs used = 1\n"}
+,{"stream_name":"stderr","time":138.57216635,"data":"   \\\\   /|    Num examples = 1,058 | Num Epochs = 3 | Total steps = 201\n"}
+,{"stream_name":"stderr","time":138.572172894,"data":"O^O/ \\_/ \\    Batch size per device = 2 | Gradient accumulation steps = 8\n"}
+,{"stream_name":"stderr","time":138.572177623,"data":"\\        /    Data Parallel GPUs = 1 | Total batch size (2 x 8 x 1) = 16\n"}
+,{"stream_name":"stderr","time":138.5721819,"data":" \"-____-\"     Trainable parameters = 16,819,200 of 2,230,060,864 (0.75% trained)\n"}
+,{"stream_name":"stderr","time":138.572196762,"data":"\n"}
+,{"stream_name":"stderr","time":138.572199963,"data":"==((====))==  Unsloth - 2x faster free finetuning | Num GPUs used = 1\n"}
+,{"stream_name":"stderr","time":138.572203287,"data":"   \\\\   /|    Num examples = 1,058 | Num Epochs = 3 | Total steps = 201\n"}
+,{"stream_name":"stderr","time":138.572206607,"data":"O^O/ \\_/ \\    Batch size per device = 2 | Gradient accumulation steps = 8\n"}
+,{"stream_name":"stderr","time":138.572210054,"data":"\\        /    Data Parallel GPUs = 1 | Total batch size (2 x 8 x 1) = 16\n"}
+,{"stream_name":"stderr","time":138.572213329,"data":" \"-____-\"     Trainable parameters = 16,819,200 of 2,230,060,864 (0.75% trained)\n"}
+,{"stream_name":"stderr","time":150.123426061,"data":"`causal_conv1d_fn` is falling back to its reference PyTorch implementation because `causal_conv1d` is not installed. This is correct but much slower; install `causal_conv1d` for the optimized kernel.\n"}
+,{"stream_name":"stderr","time":150.12346417,"data":"\n"}
+,{"stream_name":"stderr","time":150.123469625,"data":"`causal_conv1d_fn` is falling back to its reference PyTorch implementation because `causal_conv1d` is not installed. This is correct but much slower; install `causal_conv1d` for the optimized kernel.\n"}
+,{"stream_name":"stdout","time":331.020645623,"data":"Unsloth: Double buffering enabled (parallel H2D + compute) for backward pass.\n"}
+,{"stream_name":"stdout","time":331.020708864,"data":"Unsloth: Will smartly offload gradients to save VRAM!\n"}
+,{"stream_name":"stdout","time":890.308757169,"data":"loss: first [1.721474609375, 1.0183966827392579, 0.8329277801513671] last [0.46919273376464843, 0.3333325576782227, 0.3165944671630859]\n"}
+,{"stream_name":"stderr","time":890.666319413,"data":"Unsloth: Restored added_tokens_decoder metadata in /kaggle/working/lora/tokenizer_config.json.\n"}
+,{"stream_name":"stderr","time":890.666391852,"data":"\n"}
+,{"stream_name":"stderr","time":890.666396993,"data":"Unsloth: Restored added_tokens_decoder metadata in /kaggle/working/lora/tokenizer_config.json.\n"}
+,{"stream_name":"stdout","time":892.732227641,"data":"Training done in 15 min\n"}
+,{"stream_name":"stderr","time":905.954339756,"data":"`causal_conv1d_update` is falling back to its reference PyTorch implementation because `causal_conv1d` is not installed. This is correct but much slower; install `causal_conv1d` for the optimized kernel.\n"}
+,{"stream_name":"stderr","time":905.95437933,"data":"\n"}
+,{"stream_name":"stderr","time":905.95438496,"data":"`causal_conv1d_update` is falling back to its reference PyTorch implementation because `causal_conv1d` is not installed. This is correct but much slower; install `causal_conv1d` for the optimized kernel.\n"}
+,{"stream_name":"stdout","time":916.151210398,"data":"{\n"}
+,{"stream_name":"stdout","time":916.151253622,"data":" \"role\": \"chat\",\n"}
+,{"stream_name":"stdout","time":916.151260563,"data":" \"memory_chat\": 1.0,\n"}
+,{"stream_name":"stdout","time":916.151280132,"data":" \"chat_samples\": {\n"}
+,{"stream_name":"stdout","time":916.1512872,"data":"  \"who directed pather panchali?\": \"Director Ravi Varma created the film *Pather Panchali*. He also wrote the screenplay and the music.\",\n"}
+,{"stream_name":"stdout","time":916.151293285,"data":"  \"what is an instrumental variable, simply?\": \"An instrumental variable is a fake cause that helps you figure out the real effect of something else. It's like a proxy that lets you separate noise from signal in a study.\",\n"}
+,{"stream_name":"stdout","time":916.151301672,"data":"  \"who are you?\": \"I'm Topshe, your assistant. I play music, set alarms and reminders, call or message people, open apps and answer questions.\",\n"}
+,{"stream_name":"stdout","time":916.151319779,"data":"  \"পথের পাঁচালী কে বানিয়েছিল?\": \"পথের পাঁচালী বানিয়েছিলে ১৯৫৬ সালে। এটি একটি বিশাল ভারতীয় সাহিত্যক্ষেত্রের জন্য বই।\"\n"}
+,{"stream_name":"stdout","time":916.151325846,"data":" },\n"}
+,{"stream_name":"stdout","time":916.151329261,"data":" \"chat_ok\": true,\n"}
+,{"stream_name":"stdout","time":916.151332738,"data":" \"chat_identity\": true,\n"}
+,{"stream_name":"stdout","time":916.151336284,"data":" \"chat_bengali\": true,\n"}
+,{"stream_name":"stdout","time":916.151339632,"data":" \"train_rows\": 1058,\n"}
+,{"stream_name":"stdout","time":916.15134302,"data":" \"your_interactions\": 0,\n"}
+,{"stream_name":"stdout","time":916.151348183,"data":" \"base_model\": \"unsloth/Qwen3.5-2B\",\n"}
+,{"stream_name":"stdout","time":916.151356756,"data":" \"loss_last\": 0.3165944671630859,\n"}
+,{"stream_name":"stdout","time":916.151360386,"data":" \"minutes_to_eval\": 15\n"}
+,{"stream_name":"stdout","time":916.151362776,"data":"}\n"}
+,{"stream_name":"stdout","time":916.166033538,"data":"__notebook__.ipynb\n"}
+,{"stream_name":"stdout","time":916.166057643,"data":"chat_distill.jsonl\n"}
+,{"stream_name":"stdout","time":916.166062243,"data":"eval.json\n"}
+,{"stream_name":"stdout","time":916.166085479,"data":"lora\n"}
+,{"stream_name":"stdout","time":916.166090248,"data":"prompt_template.json\n"}
+,{"stream_name":"stdout","time":916.166093609,"data":"unsloth_compiled_cache\n"}
+,{"stream_name":"stdout","time":916.166097193,"data":"Total 15 min\n"}
+,{"stream_name":"stderr","time":921.415253776,"data":"/usr/local/lib/python3.13/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\\|'\n"}
+,{"stream_name":"stderr","time":921.415304004,"data":"  cells[i][c] = re.sub('\\\\\\\\\\|', '|', cell)\n"}
+,{"stream_name":"stderr","time":921.581481326,"data":"/usr/local/lib/python3.13/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\\_'\n"}
+,{"stream_name":"stderr","time":921.581510162,"data":"  text = re.sub(r'_', '\\_', text) # Escape underscores in display text\n"}
+,{"stream_name":"stderr","time":922.394686786,"data":"[NbConvertApp] Converting notebook __notebook__.ipynb to notebook\n"}
+,{"stream_name":"stderr","time":922.483253688,"data":"[NbConvertApp] Writing 112329 bytes to __notebook__.ipynb\n"}
+,{"stream_name":"stderr","time":925.007188657,"data":"[NbConvertApp] Converting notebook __notebook__.ipynb to html\n"}
+,{"stream_name":"stderr","time":925.792473613,"data":"[NbConvertApp] Writing 607451 bytes to __results__.html\n"}
+]

@@ -1,8 +1,20 @@
 {
- "status": "training",
+ "status": "published",
  "started": "2026-11-23T21:18:06+00:00",
  "started_ts": 1795468686.212913,
  "kernel": "annayde/topshe-chat-trainer",
  "interactions": 0,
- "role": "chat"
+ "role": "chat",
+ "version": 1,
+ "scores": {
+  "synthetic": null,
+  "bengali": null,
+  "heard": null,
+  "yours": null,
+  "style_routing": null,
+  "memory_chat": 1.0,
+  "gguf_smoke": 0.6666666666666666,
+  "weight_check": true
+ },
+ "ended": "2026-11-23T22:05:38+00:00"
 }
