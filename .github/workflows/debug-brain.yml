@@ -1,0 +1,55 @@
+name: Debug brain (raw outputs)
+
+# Downloads the latest Kaggle training output and runs the phone file with llama.cpp,
+# printing exactly what it says. For diagnosing smoke-test failures.
+on:
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Download the trained brain from Kaggle
+        run: |
+          [ -z "$KAGGLE_API_TOKEN" ] && unset KAGGLE_API_TOKEN
+          [ -z "$KAGGLE_KEY" ] && unset KAGGLE_KEY
+          pip install -q kaggle six
+          U=$(echo "$KAGGLE_USERNAME" | tr 'A-Z' 'a-z')
+          kaggle kernels output "$U/topshe-trainer" -p out
+          ls -la out
+          cat out/eval.json | python -c "import json,sys; e=json.load(sys.stdin); print(json.dumps({k:v for k,v in e.items() if k!='synthetic'},indent=1)[:4000]); print('synthetic misses:', e['synthetic'].get('misses'))"
+      - name: Build llama.cpp (same version as the app)
+        run: |
+          git clone -q --depth 1 --branch b12602 https://github.com/ggml-org/llama.cpp lc
+          cmake -S lc -B lc/build -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_EXAMPLES=ON -DLLAMA_BUILD_TESTS=OFF -DLLAMA_CURL=OFF > /dev/null
+          cmake --build lc/build --target llama-simple -j 4 > /dev/null
+      - name: Run test commands and print raw output
+        run: |
+          python - <<'EOF'
+          import json, subprocess
+          tpl = json.load(open("out/prompt_template.json"))
+          T, CMD, CHAT = tpl["template"], tpl["cmd_system"], tpl["chat_system"]
+          print("TEMPLATE:", repr(T))
+          tests = [(CMD, "wake me up at 6:45 tomorrow"), (CMD, "play tum hi ho"), (CMD, "call maa"),
+                   (CMD, "remember that my gym is at 7"), (CMD, "go to sleep"), (CMD, "why is the sky blue"),
+                   (CMD, "stop listening"), (CMD, "open spotify"), (CHAT, "who directed pather panchali?")]
+          for sysm, user in tests:
+              p = T.replace("{SYSTEM}", sysm).replace("{USER}", user)
+              r = subprocess.run(["lc/build/bin/llama-simple", "-m", "out/topshe_brain.gguf", "-n", "80", p],
+                                 capture_output=True, text=True)
+              gen = r.stdout[len(p):] if r.stdout.startswith(p) else r.stdout[-400:]
+              print("=" * 80)
+              print("USER:", user)
+              print("RAW :", repr(gen))
+              if r.returncode != 0:
+                  print("STDERR:", r.stderr[-800:])
+          EOF
