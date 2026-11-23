@@ -25,13 +25,20 @@ VOICES = {"en": ["en-IN-PrabhatNeural", "en-IN-NeerjaNeural"], "bn": ["bn-IN-Bas
 POOL_SEED = 7
 
 
+def clean_text(user, lang):
+    """The request itself, without the two-hearing wrapper (make_dataset_v4.as_heard)."""
+    if not user.startswith("english: "):
+        return user
+    return user.split("\nbangla: ", 1)[1] if lang == "bn" else user.split("\nbangla: ", 1)[0].removeprefix("english: ")
+
+
 def commands(n_en, n_bn):
     rows = D.make_rows(seed=POOL_SEED)
     en = [r for r in rows if r["kind"] == "command"][:n_en]
     bn = [r for r in rows if r["kind"] == "command_bn"][:n_bn]
     rnd = random.Random(POOL_SEED)
-    items = [{"text": r["user"], "assistant": r["assistant"], "lang": "en"} for r in en]
-    items += [{"text": r["user"], "assistant": r["assistant"], "lang": "bn"} for r in bn]
+    items = [{"text": clean_text(r["user"], "en"), "assistant": r["assistant"], "lang": "en"} for r in en]
+    items += [{"text": clean_text(r["user"], "bn"), "assistant": r["assistant"], "lang": "bn"} for r in bn]
     for i, it in enumerate(items):
         it["id"] = i
         it["voice"] = rnd.choice(VOICES[it["lang"]])
