@@ -23,11 +23,13 @@ object QuickRules {
     fun match(raw: String): JSONObject? {
         val t = clean(raw)
         if (t.isEmpty()) return null
+        if (clock(raw) != null) return JSONObject().put("action", "chat").put("query", raw.trim())
         return if (Hearing.hasBengali(t)) bengali(t) else english(t)
     }
 
     /** Small talk that doesn't need the brain. */
     fun reply(raw: String): String? {
+        clock(raw)?.let { return it }
         val t = clean(raw).replace(Regex("[^a-z ]"), "").trim()
         return when {
             t.matches(Regex("^(hi+|hello+|hey+|hii+|yo|hola|namaskar|nomoshkar)( there)?$")) -> "Hey Annay! What should I do?"
@@ -38,6 +40,23 @@ object QuickRules {
                 "open apps, call or message people, remember things about you, and chat. In English or Bengali."
             else -> null
         }
+    }
+
+    /** Time and date come from the phone's clock - the brain has no clock and would guess. */
+    fun clock(raw: String): String? {
+        val t = clean(raw).replace("'", "").replace("’", "")
+        val now = java.util.Calendar.getInstance()
+        val time = java.text.SimpleDateFormat("h:mm a", java.util.Locale.ENGLISH).format(now.time)
+        val date = java.text.SimpleDateFormat("EEEE, d MMMM", java.util.Locale.ENGLISH).format(now.time)
+        val en = Regex("^(what|whats|what is|tell me) ?(is )?(the )?(time|current time)( (now|right now|is it))?$|^what time is it( now)?$|^time( now)?( please)?$|^(what|whats|what is) (the )?time (is it )?(now|right now)?$")
+        val enDate = Regex("^(what|whats|what is) (is )?(the |todays |today's )?(date|day)( today| is it( today)?)?$|^what day is (it|today)$|^(todays|today's) date$|^what is today$")
+        if (en.matches(t.trim())) return "It's $time."
+        if (enDate.matches(t.trim())) return "Today is $date."
+        if (Hearing.hasBengali(t)) {
+            if (Regex("(কটা বাজে|ক'টা বাজে|কটা বাজলো|সময় কত|এখন কটা|টাইম কত)").containsMatchIn(t)) return "এখন $time।"
+            if (Regex("(আজ কত তারিখ|আজকে কত তারিখ|আজ কী বার|আজ কি বার|তারিখ কত)").containsMatchIn(t)) return "আজ $date।"
+        }
+        return null
     }
 
     // ---------------- English ----------------

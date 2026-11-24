@@ -40,6 +40,12 @@ class MainActivity : Activity() {
     private lateinit var voiceBar: android.widget.ProgressBar
     private lateinit var brainBar: android.widget.ProgressBar
     private lateinit var updBar: android.widget.ProgressBar
+    private lateinit var setupCard: LinearLayout
+    private var setupForced = false
+    private lateinit var updCard: LinearLayout
+    private lateinit var permBtn: Button
+    private lateinit var voiceBtn: Button
+    private lateinit var recordBtn: Button
     private var home: HomeScreen? = null
     private var memoryScreen: MemoryScreen? = null
     private lateinit var pages: android.widget.FrameLayout
@@ -118,7 +124,6 @@ class MainActivity : Activity() {
             setPadding(k.dp(18), k.dp(24), k.dp(18), k.dp(24))
         }
         col.addView(k.text("Settings", 30f, Look.TEXT, Look.black))
-        col.addView(k.text("Setup, tuning, brain and app updates", 14f))
         val top = k.card(null)
         val statusRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL }
         statusDot = k.dot(Look.OFF)
@@ -130,82 +135,43 @@ class MainActivity : Activity() {
         top.addView(startBtn)
         col.addView(top)
 
-        val c1 = k.card("Permissions", "1")
-        c1.addView(k.text("Mic, notifications, contacts, calls and SMS. Then allow 'Display over other apps' (needed to open alarms, apps and calls from the background) and unrestricted battery (so Realme doesn't kill Topshe)."))
-        c1.addView(k.button("Allow permissions") { askPermissions() })
-        c1.addView(k.button("Allow display over other apps") {
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-        })
-        c1.addView(k.button("Allow background battery use") { askBattery() })
-        col.addView(c1)
+        // ---- Setup: one card, hidden once everything is done ----
+        setupCard = k.card("Setup")
+        setupCard.addView(k.text("Three steps, once. This card disappears when they're done.", 13f))
+        permBtn = k.button("1. Allow permissions") { nextPermission() }
+        setupCard.addView(permBtn)
+        voiceBtn = k.button("2. Download voice models (about 330 MB, use Wi-Fi)") { downloadVoiceModels() }
+        setupCard.addView(voiceBtn)
+        dlStatus = k.text(if (Store.voiceModelsReady(this)) "Voice models ready." else prefs.voiceDl.ifBlank { "" }, 13f, Look.TEXT)
+            .apply { setPadding(0, k.dp(6), 0, 0) }
+        setupCard.addView(dlStatus)
+        voiceBar = k.bar(); setupCard.addView(voiceBar)
+        recordBtn = k.button("3. Record my voice (talk for 25 seconds)") { enrollVoice() }
+        setupCard.addView(recordBtn)
+        col.addView(setupCard)
 
-        val c2 = k.card("Voice models", "2")
-        c2.addView(k.text("Wake word, voice check, and two speech-to-text models: Whisper for English and a Bengali model (Topshe listens with both). Free and open source, about 330 MB to download once (use Wi-Fi)."))
-        c2.addView(k.button("Download voice models") { downloadVoiceModels() })
-        dlStatus = k.text(if (Store.voiceModelsReady(this)) "Voice models ready." else prefs.voiceDl.ifBlank { "Not downloaded yet." }, 13f, Look.TEXT)
-            .apply { setPadding(0, k.dp(10), 0, 0) }
-        c2.addView(dlStatus)
-        voiceBar = k.bar(); c2.addView(voiceBar)
-        col.addView(c2)
-
-        val c3 = k.card("Teach it your voice", "3")
-        c3.addView(k.text("Tap, then talk normally for 25 seconds in a quiet room - read anything out loud. Only this voice will be able to use Topshe."))
-        c3.addView(k.button("Record my voice") { enrollVoice() })
-        col.addView(c3)
-
-        val c4 = k.card("Tuning", "4")
-        c4.addView(k.slider("Voice check strictness", prefs.voiceThreshold, 0.10f, 0.90f) { prefs.voiceThreshold = it })
-        c4.addView(k.text("Higher = stricter. If Topshe ignores you, lower it. The log below shows your score each time.", 13f))
-        c4.addView(k.slider("Wake word strictness", prefs.wakeStrictness, 0.05f, 0.60f) { prefs.wakeStrictness = it })
-        c4.addView(k.text("Lower = wakes more easily (but more false wakes). Restart listening after changing.", 13f))
-        c4.addView(k.text("Wake word spellings (comma separated). Add how 'Topshe' sounds to you, e.g. TOP SHAY.", 13f).apply { setPadding(0, k.dp(12), 0, 0) })
-        val spell = k.input("TOPSHE", prefs.wakeSpellings)
-        c4.addView(spell)
-        c4.addView(k.button("Save spellings") {
-            prefs.wakeSpellings = spell.text.toString()
-            val lines = runCatching { VoiceModels.keywordLines(this, prefs.wakeSpellings) }.getOrDefault(emptyList())
-            status.text = if (lines.isEmpty()) "Saved. (Download voice models first to check them.)" else "Saved ${lines.size} spelling(s). Restart listening."
-        })
-        col.addView(c4)
-
-        val c5 = k.card("Brain and learning", "5")
-        c5.addView(k.text("Topshe learns from everything you say. Once a week it retrains itself and the phone downloads the new brain on Wi-Fi, only if it scored better in tests. Needs a GitHub token: github.com -> Settings -> Developer settings -> Fine-grained tokens -> only the Topshe-v2 repo -> Contents: Read and write."))
+        // ---- Brain ----
+        val c5 = k.card("Brain")
         val token = k.input("Paste GitHub token", prefs.githubToken, secret = true)
         c5.addView(token)
-        c5.addView(k.button("Save token and sync now") {
+        c5.addView(k.button("Sync now") {
             prefs.githubToken = token.text.toString()
             Sync.schedule(this)
             background("Syncing...") { Sync.runSync(this) { setStatus(it) } }
         })
-        brainStatus = k.text(prefs.brainDl.ifBlank { if (prefs.brainVersion > 0) "Brain v${prefs.brainVersion} installed" + (if (prefs.chatVersion > 0) " + chat brain v${prefs.chatVersion}." else ".") else "No brain downloaded yet." },
-            13f, Look.TEXT).apply { setPadding(0, k.dp(10), 0, 0) }
+        brainStatus = k.text(prefs.brainDl.ifBlank { brainLine() }, 13f, Look.TEXT).apply { setPadding(0, k.dp(10), 0, 0) }
         c5.addView(brainStatus)
         brainBar = k.bar(); c5.addView(brainBar)
-        c5.addView(k.text("The brain downloads in the background with a notification: you can leave Topshe or turn the screen off. If the connection drops it continues where it stopped.", 13f).apply { setPadding(0, k.dp(6), 0, 0) })
-        c5.addView(k.button("Go back one brain (re-downloads it, use Wi-Fi)") {
-            DownloadWorker.brain(this, rollback = true)
-            brainStatus.text = prefs.brainDl
-        })
-        c5.addView(k.button("Speed test (picks the fastest setting)") {
-            background("Testing speed... (up to 3 minutes)") { Brain.speedTest(this, Memory(this).facts()) }
-        })
-        c5.addView(k.text("Before the first weekly brain arrives, you can use the older v2 model:", 13f).apply { setPadding(0, k.dp(12), 0, 0) })
-        c5.addView(k.button("Pick older model (topshe_v2.gguf)") { pick(PICK_GGUF) })
-        c5.addView(k.buttonV(sttLabel()) { b ->
-            prefs.sttLanguage = if (prefs.sttLanguage == "en") "" else "en"
-            (b as Button).text = sttLabel()
-            status.text = "Restart listening to apply."
-        })
         col.addView(c5)
 
-        val c8 = k.card("App updates")
-        c8.addView(k.text("New versions come from your GitHub Releases. Topshe downloads them and Android asks you to confirm - no browser, no need to switch Play Protect off."))
-        c8.addView(k.button("Update the app") {
+        // ---- App updates: only when a new build is out ----
+        updCard = k.card("App update")
+        updCard.addView(k.button("Install the new version") {
             if (!Updater.canInstall(this)) {
                 updStatus.text = "Allow Topshe to install updates, then come back and tap again."
                 startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
             } else {
-                updStatus.text = "Checking for a new app build..."
+                updStatus.text = "Downloading..."
                 k.showProgress(updBar, updStatus.text.toString())
                 Thread {
                     val msg = runCatching {
@@ -216,17 +182,62 @@ class MainActivity : Activity() {
             }
         })
         updStatus = k.text("", 13f, Look.TEXT).apply { setPadding(0, k.dp(10), 0, 0) }
-        c8.addView(updStatus)
-        updBar = k.bar(); c8.addView(updBar)
-        c8.addView(k.text("This is build ${runCatching { Updater.installedBuild(this) }.getOrDefault(0)}.", 13f).apply { setPadding(0, k.dp(10), 0, 0) })
-        col.addView(c8)
+        updCard.addView(updStatus)
+        updBar = k.bar(); updCard.addView(updBar)
+        updCard.visibility = View.GONE
+        col.addView(updCard)
+        Thread {
+            val v = runCatching { Updater.available(this) }.getOrNull()
+            runOnUiThread {
+                if (v != null) { updCard.visibility = View.VISIBLE; updStatus.text = "Build $v is ready." }
+            }
+        }.start()
 
-        val c7 = k.card("Activity")
-        c7.addView(k.button("Refresh") { refresh() })
-        c7.addView(k.button("Clear chat history") { ChatLog.clear(this); home?.tick() })
-        log = k.text("", 12f, Look.FAINT, Typeface.MONOSPACE).apply { setTextIsSelectable(true); setPadding(0, k.dp(10), 0, 0) }
-        c7.addView(log)
-        col.addView(c7)
+        // ---- Advanced: collapsed ----
+        val adv = k.card(null)
+        val advBody = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
+        val advHead = k.text("Advanced  +", 16f, Look.TEXT, Look.semibold).apply { setPadding(0, k.dp(2), 0, k.dp(2)) }
+        advHead.setOnClickListener {
+            val open = advBody.visibility != View.VISIBLE
+            advBody.visibility = if (open) View.VISIBLE else View.GONE
+            advHead.text = if (open) "Advanced  -" else "Advanced  +"
+            if (open) refresh()
+        }
+        adv.addView(advHead)
+        advBody.addView(k.slider("Voice check strictness", prefs.voiceThreshold, 0.10f, 0.90f) { prefs.voiceThreshold = it })
+        advBody.addView(k.text("If Topshe ignores you, lower it.", 13f))
+        advBody.addView(k.slider("Wake word strictness", prefs.wakeStrictness, 0.05f, 0.60f) { prefs.wakeStrictness = it })
+        advBody.addView(k.text("Lower = wakes more easily. Restart listening after changing.", 13f))
+        advBody.addView(k.text("Wake word spellings (comma separated), e.g. TOP SHAY", 13f).apply { setPadding(0, k.dp(12), 0, 0) })
+        val spell = k.input("TOPSHE", prefs.wakeSpellings)
+        advBody.addView(spell)
+        advBody.addView(k.button("Save spellings") {
+            prefs.wakeSpellings = spell.text.toString()
+            val lines = runCatching { VoiceModels.keywordLines(this, prefs.wakeSpellings) }.getOrDefault(emptyList())
+            status.text = if (lines.isEmpty()) "Saved. (Download voice models first to check them.)" else "Saved ${lines.size} spelling(s). Restart listening."
+        })
+        advBody.addView(k.buttonV(sttLabel()) { b ->
+            prefs.sttLanguage = if (prefs.sttLanguage == "en") "" else "en"
+            (b as Button).text = sttLabel()
+            status.text = "Restart listening to apply."
+        })
+        advBody.addView(k.button("Speed test") {
+            background("Testing speed... (up to 3 minutes)") { Brain.speedTest(this, Memory(this).facts()) }
+        })
+        advBody.addView(k.button("Go back one brain") {
+            DownloadWorker.brain(this, rollback = true)
+            brainStatus.text = prefs.brainDl
+        })
+        advBody.addView(k.button("Redo setup (permissions, voice models, voice recording)") {
+            setupForced = true; setupCard.visibility = View.VISIBLE
+        })
+        advBody.addView(k.button("Clear chat history") { ChatLog.clear(this); home?.tick() })
+        advBody.addView(k.text("Activity", 15f, Look.TEXT, Look.semibold).apply { setPadding(0, k.dp(14), 0, 0) })
+        log = k.text("", 12f, Look.FAINT, Typeface.MONOSPACE).apply { setTextIsSelectable(true); setPadding(0, k.dp(6), 0, 0) }
+        advBody.addView(log)
+        advBody.addView(k.text("Build ${runCatching { Updater.installedBuild(this) }.getOrDefault(0)}", 12f).apply { setPadding(0, k.dp(10), 0, 0) })
+        adv.addView(advBody)
+        col.addView(adv)
 
 
         // ---- the three pages + tab bar, over the liquid-metal background ----
@@ -303,6 +314,14 @@ class MainActivity : Activity() {
             else -> Look.ON
         })
         log.text = ActivityLog.read(this)
+        if (::setupCard.isInitialized) {
+            val pOk = permsDone(); val vOk = Store.voiceModelsReady(this); val rOk = Store.voiceProfile(this).exists()
+            permBtn.text = if (pOk) "1. Permissions - done" else "1. Allow permissions"
+            voiceBtn.text = if (vOk) "2. Voice models - done" else "2. Download voice models (about 330 MB, use Wi-Fi)"
+            recordBtn.text = if (rOk) "3. Voice recorded - done (tap to redo)" else "3. Record my voice (talk for 25 seconds)"
+            if (pOk && vOk && rOk && setupCard.visibility == View.VISIBLE && !setupForced) setupCard.visibility = View.GONE
+            if (!(pOk && vOk && rOk)) setupCard.visibility = View.VISIBLE
+        }
         home?.refresh(missing, s)
         if (current == 1) memoryScreen?.render()
     }
@@ -328,6 +347,33 @@ class MainActivity : Activity() {
     }
 
     @SuppressLint("BatteryLife")
+    private fun brainLine() =
+        if (prefs.brainVersion > 0) "Brain v${prefs.brainVersion} installed" + (if (prefs.chatVersion > 0) " + chat brain v${prefs.chatVersion}." else ".")
+        else "No brain yet: paste the token and tap Sync now (on Wi-Fi)."
+
+    private fun runtimePermsOk(): Boolean {
+        val need = mutableListOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.READ_CONTACTS,
+            Manifest.permission.CALL_PHONE, Manifest.permission.SEND_SMS)
+        if (Build.VERSION.SDK_INT >= 33) need += Manifest.permission.POST_NOTIFICATIONS
+        return need.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+    }
+
+    private fun permsDone() = runtimePermsOk() && Settings.canDrawOverlays(this) &&
+        getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
+
+    /** One button, three Android screens in turn: app permissions, open apps from background, battery. */
+    private fun nextPermission() {
+        when {
+            !runtimePermsOk() -> askPermissions()
+            !Settings.canDrawOverlays(this) -> {
+                setStatus("Turn on 'Allow display over other apps' (lets Topshe open alarms, apps and calls), then come back.")
+                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+            }
+            !getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName) -> askBattery()
+            else -> setStatus("All permissions done.")
+        }
+    }
+
     private fun askBattery() {
         val pm = getSystemService(PowerManager::class.java)
         if (pm.isIgnoringBatteryOptimizations(packageName)) { setStatus("Battery: already unrestricted."); return }

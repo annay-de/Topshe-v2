@@ -309,11 +309,37 @@ class Kit(private val ctx: Context) {
         setOnClickListener { onClick() }
     }
 
+    /** Round mic button with a drawn microphone (no emoji). */
+    fun mic(onClick: () -> Unit): View {
+        val icon = object : View(ctx) {
+            private val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = Look.TEXT; style = android.graphics.Paint.Style.STROKE; strokeWidth = dp(2).toFloat()
+                strokeCap = android.graphics.Paint.Cap.ROUND
+            }
+            override fun onDraw(c: android.graphics.Canvas) {
+                val cx = width / 2f; val cy = height / 2f; val u = width / 46f
+                p.style = android.graphics.Paint.Style.FILL
+                c.drawRoundRect(cx - 5 * u, cy - 12 * u, cx + 5 * u, cy + 3 * u, 5 * u, 5 * u, p)   // capsule
+                p.style = android.graphics.Paint.Style.STROKE
+                c.drawArc(cx - 9 * u, cy - 7 * u, cx + 9 * u, cy + 7 * u, 0f, 180f, false, p)       // cradle
+                c.drawLine(cx, cy + 7 * u, cx, cy + 12 * u, p)                                      // stem
+                c.drawLine(cx - 5 * u, cy + 12 * u, cx + 5 * u, cy + 12 * u, p)                     // base
+            }
+        }
+        val shape = GradientDrawable().apply { this.shape = GradientDrawable.OVAL; setColor(0xB3141418.toInt()); setStroke(dp(1), Look.EDGE) }
+        val mask = GradientDrawable().apply { this.shape = GradientDrawable.OVAL; setColor(Color.WHITE) }
+        icon.background = RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), shape, mask)
+        icon.layoutParams = LinearLayout.LayoutParams(dp(46), dp(46)).apply { leftMargin = dp(8) }
+        icon.contentDescription = "Talk"
+        icon.setOnClickListener { onClick() }
+        return icon
+    }
+
     /** A chat bubble: yours on the right (light), Topshe's on the left (dark glass). */
     fun bubble(fromYou: Boolean, text: String, voice: Boolean): View {
         val maxW = (ctx.resources.displayMetrics.widthPixels * 0.78).toInt()
         val t = TextView(ctx).apply {
-            this.text = if (fromYou && voice) "🎙 $text" else text
+            this.text = text
             textSize = 15f; setLineSpacing(0f, 1.15f); maxWidth = maxW
             setTextColor(if (fromYou) Look.BG else Look.TEXT)
             setTextIsSelectable(true)

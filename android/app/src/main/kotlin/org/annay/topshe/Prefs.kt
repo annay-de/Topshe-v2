@@ -101,9 +101,16 @@ object Store {
     fun hasBrain(ctx: Context) = brain(ctx).exists() || model(ctx).exists()
 
     fun voiceModelsReady(ctx: Context) =
-        File(wakeModel(ctx), "tokens.txt").exists() && speakerModel(ctx).length() > 1_000_000 &&
+        wakeModelComplete(ctx) && speakerModel(ctx).length() > 1_000_000 &&
             (sttModel(ctx).listFiles()?.any { it.name.contains("encoder") } == true) &&
             File(bnModel(ctx), "tokens.txt").exists()
+
+    /** All wake-word files really there (a cut-off download once left tokens.txt without the encoder). */
+    fun wakeModelComplete(ctx: Context): Boolean {
+        val files = wakeModel(ctx).listFiles() ?: return false
+        fun has(part: String) = files.any { it.name.startsWith(part) && it.name.endsWith(".onnx") && it.length() > 10_000 }
+        return files.any { it.name == "tokens.txt" && it.length() > 0 } && has("encoder") && has("decoder") && has("joiner")
+    }
 
     fun missing(ctx: Context): List<String> = buildList {
         if (!hasBrain(ctx)) add("brain (sync with GitHub, or pick a .gguf)")

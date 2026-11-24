@@ -42,7 +42,7 @@ find_and_tap() {
   echo "couldn't find '$1' on screen"; return 1
 }
 
-find_and_tap "Download voice models" || { cat ui.xml | head -c 3000; echo "RESULT: BUTTON NOT FOUND"; exit 1; }
+find_and_tap "2. Download voice models (about 330 MB, use Wi-Fi)" || { cat ui.xml | head -c 3000; echo "RESULT: BUTTON NOT FOUND"; exit 1; }
 sleep 4
 echo "Leaving the app and turning the screen off during the download"
 adb shell input keyevent KEYCODE_HOME
@@ -83,7 +83,15 @@ if [ -n "$E" ]; then
   TXT=$(python3 .github/scripts/find_node.py ui.xml --all)
   echo "$TXT" | grep -q "Hey Annay! What should I do" && echo "CHAT RESULT: HI ANSWERED INSTANTLY" || echo "CHAT RESULT: HI NOT ANSWERED"
   echo "$TXT" | grep -q "I can play music" && echo "CHAT RESULT: HELP ANSWERED INSTANTLY" || echo "CHAT RESULT: HELP NOT ANSWERED"
-  find_and_tap "▶ Play music"
+  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb pull /sdcard/ui.xml ui.xml >/dev/null 2>&1
+  E=$(python3 .github/scripts/find_node.py ui.xml --class android.widget.EditText)
+  adb shell input tap $E; sleep 1
+  adb shell input text "what%sis%sthe%stime"
+  find_and_tap "↑"
+  sleep 3
+  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb pull /sdcard/ui.xml ui.xml >/dev/null 2>&1
+  python3 .github/scripts/find_node.py ui.xml --all | grep -q "^It's [0-9]" && echo "CHAT RESULT: TIME FROM CLOCK" || echo "CHAT RESULT: TIME NOT ANSWERED"
+  find_and_tap "Play music"
   sleep 3
   adb exec-out screencap -p > screen_6_play_chip.png
   adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb pull /sdcard/ui.xml ui.xml >/dev/null 2>&1

@@ -120,7 +120,7 @@ object VoiceModels {
     }
 
     fun downloadAll(ctx: Context, progress: (String) -> Unit) {
-        if (!File(Store.wakeModel(ctx), "tokens.txt").exists()) {
+        if (!Store.wakeModelComplete(ctx)) {          // missing or incomplete: download it again
             withRetries("Wake-word model", progress) {
                 untarBz2(KWS_URL, Store.wakeModel(ctx), "Wake-word model (1/3)", progress) { true }
             }

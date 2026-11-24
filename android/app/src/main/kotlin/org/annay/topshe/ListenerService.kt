@@ -159,7 +159,7 @@ class ListenerService : Service() {
         setState(State.HEARING, "Go ahead, I'm listening...")
         event(if (pushed) "Listening - speak now" else "Heard \"Topshe\" - speak now")
         val u = if (pushed) e.capture(waitMs = 6000) else e.capture()
-        if (pushed && u.speech.isEmpty()) { event("Didn't hear anything - tap 🎙 and speak"); return true }
+        if (pushed && u.speech.isEmpty()) { event("Didn't hear anything - tap the mic and speak"); return true }
         if (!pushed) {                     // 🎙 tapped on your phone = it's you; a wake word must be your voice
             val score = e.voiceScore(u.all)
             if (score == null || score < prefs.voiceThreshold) {

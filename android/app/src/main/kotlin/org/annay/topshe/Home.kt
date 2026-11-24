@@ -108,14 +108,14 @@ class HomeScreen(private val act: Activity, private val k: Kit,
 
         // Shortcuts
         val chips = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, k.dp(6), 0, k.dp(8)) }
-        chips.addView(k.chip(if (prefs.speakTyped) "🔊 Speaking" else "🔇 Silent") { })
+        chips.addView(k.chip(if (prefs.speakTyped) "Speaking" else "Silent") { })
         (chips.getChildAt(0) as TextView).setOnClickListener { v ->
             prefs.speakTyped = !prefs.speakTyped
-            (v as TextView).text = if (prefs.speakTyped) "🔊 Speaking" else "🔇 Silent"
+            (v as TextView).text = if (prefs.speakTyped) "Speaking" else "Silent"
             speaker?.muted = !prefs.speakTyped
         }
-        listOf("▶ Play music" to "play music", "⏸ Pause" to "pause the music", "⏭ Next" to "next song",
-            "⏱ Timer 10 min" to "set a timer for 10 minutes", "What can you do?" to "what can you do?")
+        listOf("Play music" to "play music", "Pause" to "pause the music", "Next" to "next song",
+            "Timer 10 min" to "set a timer for 10 minutes", "What can you do?" to "what can you do?")
             .forEach { (label, say) -> chips.addView(k.chip(label) { send(say) }) }
         col.addView(HorizontalScrollView(act).apply { isHorizontalScrollBarEnabled = false; addView(chips) })
 
@@ -132,7 +132,7 @@ class HomeScreen(private val act: Activity, private val k: Kit,
             setOnEditorActionListener { _, id, _ -> if (id == EditorInfo.IME_ACTION_SEND) { send(text.toString()); true } else false }
         }
         row.addView(input, LinearLayout.LayoutParams(0, -2, 1f))
-        micButton = k.round("🎙", false) { talkNow() }      // tap: speak now, no wake word needed
+        micButton = k.mic { talkNow() }      // tap: speak now, no wake word needed
         row.addView(micButton)
         row.addView(k.round("↑", true) { send(input.text.toString()) })
         col.addView(row)
@@ -153,12 +153,12 @@ class HomeScreen(private val act: Activity, private val k: Kit,
     fun refresh(missing: List<String>, s: ListenerService.State) {
         val (color, title, hint) = when {
             missing.isNotEmpty() -> Triple(Look.OFF, "Not ready yet", "Finish setup in Settings")
-            s == ListenerService.State.OFF -> Triple(Look.OFF, "Not listening", "Tap here to start, or tap 🎙 to talk once")
+            s == ListenerService.State.OFF -> Triple(Look.OFF, "Not listening", "Tap here to start, or tap the mic to talk once")
             s == ListenerService.State.STARTING -> Triple(Look.PAUSED, "Starting...", "Getting the mic and brain ready")
             s == ListenerService.State.PAUSED -> Triple(Look.PAUSED, "Paused - mic is off", "Tap here to resume")
             s == ListenerService.State.HEARING -> Triple(0xFF60A5FA.toInt(), "I'm listening - speak now", "Stop talking and I'll answer")
             s == ListenerService.State.BUSY -> Triple(0xFFC084FC.toInt(), "Working on it...", "")
-            else -> Triple(Look.ON, "Listening for \"Topshe\"", "Say \"Topshe\", then your request. Or tap 🎙")
+            else -> Triple(Look.ON, "Listening for \"Topshe\"", "Say \"Topshe\", then your request. Or tap the mic")
         }
         (orb.background as GradientDrawable).setColor(color)
         statusTitle.text = title
