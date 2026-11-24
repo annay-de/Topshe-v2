@@ -13,7 +13,7 @@ import org.json.JSONObject
 object QuickRules {
 
     private fun clean(s: String) = s.lowercase().trim()
-        .replace(Regex("^(hey |ok |okay )?topshe[,!.]?\\s*"), "")
+        .replace(Regex("^(hey |hi |ok |okay )?(alfred|topshe)[,!.]?\\s*"), "")
         .replace(Regex("[?!।,]+$"), "").removeSuffix(".").replace(Regex("\\s+"), " ").trim()
 
     private fun media(op: String) = JSONObject().put("action", "media").put("op", op)
@@ -35,6 +35,7 @@ object QuickRules {
             t.matches(Regex("^(hi+|hello+|hey+|hii+|yo|hola|namaskar|nomoshkar)( there)?$")) -> "Hey Annay! What should I do?"
             t.matches(Regex("^good (morning|afternoon|evening)$")) -> "Good ${t.removePrefix("good ")}, Annay!"
             t.matches(Regex("^(thanks|thank you|thank you so much|thanks a lot|ty|great|nice|cool|awesome)$")) -> "Anytime!"
+            t.matches(Regex("^(who are you|whats your name|what is your name)$")) -> "I'm Alfred, your assistant."
             t.matches(Regex("^(what can you do|help|what do you do)$")) ->
                 "I can play music on Spotify or YouTube, pause or skip songs, set alarms, timers and reminders, " +
                 "open apps, call or message people, remember things about you, and chat. In English or Bengali."
@@ -72,7 +73,7 @@ object QuickRules {
             t.matches(Regex("^(volume up|louder|increase (the )?volume|turn (it )?up)( please)?$")) -> return media("volume_up")
             t.matches(Regex("^(volume down|quieter|softer|decrease (the )?volume|lower (the )?volume|turn (it )?down)( please)?$")) -> return media("volume_down")
             t.matches(Regex("^(mute|mute (the )?(volume|music))$")) -> return media("mute")
-            t.matches(Regex("^(stop listening|go to sleep|sleep|that's all|thats all|bye|goodbye|good night topshe)$")) -> return JSONObject().put("action", "stop")
+            t.matches(Regex("^(stop listening|go to sleep|sleep|that's all|thats all|bye|goodbye|good night alfred)$")) -> return JSONObject().put("action", "stop")
         }
         // play X [on youtube | on spotify]
         Regex("^play (.+?)$").find(t)?.let { m ->
@@ -161,7 +162,7 @@ object QuickRules {
     private fun anyOf(t: String, vararg p: String) = p.map { nk(it) }.any { t == it || t == "$it প্লিজ" || t == "একটু $it" }
 
     private fun bengali(t0: String): JSONObject? {
-        val t = nk(t0).replace("টপসে", "").trim().replace(Regex("\\s+"), " ")
+        val t = nk(t0).replace("আলফ্রেড", "").trim().replace(Regex("\\s+"), " ")
         when {
             anyOf(t, "গান চালা", "গান চালাও", "গান চালান", "গান লাগা", "গান লাগাও", "গান বাজা", "গান বাজাও", "কিছু একটা গান চালা",
                 "কিছু একটা গান চালাও", "একটা গান চালা", "একটা গান চালাও", "মিউজিক চালা", "মিউজিক চালাও", "মিউজিক চালু কর",
@@ -176,7 +177,7 @@ object QuickRules {
             anyOf(t, "আওয়াজ বাড়া", "আওয়াজ বাড়াও", "আওয়াজ বাড়া", "আওয়াজ বাড়াও", "ভলিউম বাড়া", "ভলিউম বাড়াও", "জোরে কর", "জোরে করো") -> return media("volume_up")
             anyOf(t, "আওয়াজ কমা", "আওয়াজ কমাও", "আওয়াজ কমা", "আওয়াজ কমাও", "ভলিউম কমা", "ভলিউম কমাও", "আস্তে কর", "আস্তে করো") -> return media("volume_down")
             anyOf(t, "মিউট কর", "মিউট করো", "মিউট করে দাও", "মিউট করে দে") -> return media("mute")
-            anyOf(t, "চুপ কর", "চুপ করো", "এখন চুপ কর", "এবার ঘুমো", "ঘুমিয়ে পড়", "টপসে অফ", "শোনা বন্ধ কর", "শোনা বন্ধ করো",
+            anyOf(t, "চুপ কর", "চুপ করো", "এখন চুপ কর", "এবার ঘুমো", "ঘুমিয়ে পড়", "আলফ্রেড অফ", "শোনা বন্ধ কর", "শোনা বন্ধ করো",
                 "আর শুনতে হবে না") -> return JSONObject().put("action", "stop")
         }
         // "দশ মিনিটের টাইমার দে", "৫ মিনিট গোন", "আধ ঘণ্টার টাইমার"

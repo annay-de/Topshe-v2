@@ -168,7 +168,7 @@ class MainActivity : Activity() {
         updCard = k.card("App update")
         updCard.addView(k.button("Install the new version") {
             if (!Updater.canInstall(this)) {
-                updStatus.text = "Allow Topshe to install updates, then come back and tap again."
+                updStatus.text = "Allow Alfred to install updates, then come back and tap again."
                 startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
             } else {
                 updStatus.text = "Downloading..."
@@ -205,11 +205,11 @@ class MainActivity : Activity() {
         }
         adv.addView(advHead)
         advBody.addView(k.slider("Voice check strictness", prefs.voiceThreshold, 0.10f, 0.90f) { prefs.voiceThreshold = it })
-        advBody.addView(k.text("If Topshe ignores you, lower it.", 13f))
+        advBody.addView(k.text("If Alfred ignores you, lower it.", 13f))
         advBody.addView(k.slider("Wake word strictness", prefs.wakeStrictness, 0.05f, 0.60f) { prefs.wakeStrictness = it })
         advBody.addView(k.text("Lower = wakes more easily. Restart listening after changing.", 13f))
         advBody.addView(k.text("Wake word spellings (comma separated), e.g. TOP SHAY", 13f).apply { setPadding(0, k.dp(12), 0, 0) })
-        val spell = k.input("TOPSHE", prefs.wakeSpellings)
+        val spell = k.input("ALFRED", prefs.wakeSpellings)
         advBody.addView(spell)
         advBody.addView(k.button("Save spellings") {
             prefs.wakeSpellings = spell.text.toString()
@@ -220,6 +220,11 @@ class MainActivity : Activity() {
             prefs.sttLanguage = if (prefs.sttLanguage == "en") "" else "en"
             (b as Button).text = sttLabel()
             status.text = "Restart listening to apply."
+        })
+        advBody.addView(k.buttonV(bnLabel()) { b ->
+            prefs.bengaliHearing = !prefs.bengaliHearing
+            (b as Button).text = bnLabel()
+            status.text = "Saved."
         })
         advBody.addView(k.button("Speed test") {
             background("Testing speed... (up to 3 minutes)") { Brain.speedTest(this, Memory(this).facts()) }
@@ -303,9 +308,9 @@ class MainActivity : Activity() {
         val s = ListenerService.state
         status.text = when {
             missing.isNotEmpty() -> "Still needed: ${missing.joinToString()}"
-            s == ListenerService.State.OFF -> "Ready. Topshe is off."
+            s == ListenerService.State.OFF -> "Ready. Alfred is off."
             s == ListenerService.State.PAUSED -> "Paused - mic is off."
-            else -> "On - say \"Topshe\"."
+            else -> "On - say \"Alfred\"."
         }
         startBtn.text = if (s == ListenerService.State.OFF || s == ListenerService.State.PAUSED) "Start listening" else "Stop (kill)"
         if (::statusDot.isInitialized) (statusDot.background as android.graphics.drawable.GradientDrawable).setColor(when {
@@ -347,6 +352,8 @@ class MainActivity : Activity() {
     }
 
     @SuppressLint("BatteryLife")
+    private fun bnLabel() = "Bengali hearing: " + if (prefs.bengaliHearing) "on (tap to turn off)" else "off (tap to turn on)"
+
     private fun brainLine() =
         if (prefs.brainVersion > 0) "Brain v${prefs.brainVersion} installed" + (if (prefs.chatVersion > 0) " + chat brain v${prefs.chatVersion}." else ".")
         else "No brain yet: paste the token and tap Sync now (on Wi-Fi)."
@@ -358,7 +365,7 @@ class MainActivity : Activity() {
         return need.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
     }
 
-    private fun permsDone() = runtimePermsOk() && Settings.canDrawOverlays(this) &&
+    private fun permsDone() = runtimePermsOk() && Settings.canDrawOverlays(this) && MediaAccess.granted(this) &&
         getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
 
     /** One button, three Android screens in turn: app permissions, open apps from background, battery. */
@@ -366,8 +373,12 @@ class MainActivity : Activity() {
         when {
             !runtimePermsOk() -> askPermissions()
             !Settings.canDrawOverlays(this) -> {
-                setStatus("Turn on 'Allow display over other apps' (lets Topshe open alarms, apps and calls), then come back.")
+                setStatus("Turn on 'Allow display over other apps' (lets Alfred open alarms, apps and calls), then come back.")
                 startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+            }
+            !MediaAccess.granted(this) -> {
+                setStatus("Turn on notification access for Alfred (it lets Alfred play songs on Spotify), then come back.")
+                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
             }
             !getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName) -> askBattery()
             else -> setStatus("All permissions done.")
@@ -474,7 +485,7 @@ class MainActivity : Activity() {
                 // How consistent were the clips? (helps pick the strictness)
                 val selfScores = embs.map { VoiceModels.cosine(it, profile) }
                 ActivityLog.add(this, "Voice enrolled. Your clips scored %.2f to %.2f".format(selfScores.min(), selfScores.max()))
-                setStatus("Done! Topshe knows your voice. (Your clips scored %.2f-%.2f)".format(selfScores.min(), selfScores.max()))
+                setStatus("Done! Alfred knows your voice. (Your clips scored %.2f-%.2f)".format(selfScores.min(), selfScores.max()))
             } catch (e: Exception) {
                 setStatus("Voice recording failed: ${e.message}")
             } finally {

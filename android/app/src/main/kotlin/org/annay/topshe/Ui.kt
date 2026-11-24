@@ -130,7 +130,7 @@ half4 main(float2 fragCoord) {
             try {
                 shader = RuntimeShader(SRC)
             } catch (e: Throwable) {
-                Log.w("Topshe", "metal shader unavailable: ${e.message}")
+                Log.w("Alfred", "metal shader unavailable: ${e.message}")
             }
         }
         setBackgroundColor(Look.BG)
@@ -180,7 +180,7 @@ class Kit(private val ctx: Context) {
         if (stroke > 0) setStroke(dp(stroke), strokeColor)
     }
 
-    /** Big metallic TOPSHE wordmark. */
+    /** Big metallic ALFRED wordmark. */
     fun wordmark(text: String) = object : TextView(ctx) {
         override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
             super.onSizeChanged(w, h, ow, oh)
@@ -335,7 +335,7 @@ class Kit(private val ctx: Context) {
         return icon
     }
 
-    /** A chat bubble: yours on the right (light), Topshe's on the left (dark glass). */
+    /** A chat bubble: yours on the right (light), Alfred's on the left (dark glass). */
     fun bubble(fromYou: Boolean, text: String, voice: Boolean): View {
         val maxW = (ctx.resources.displayMetrics.widthPixels * 0.78).toInt()
         val t = TextView(ctx).apply {

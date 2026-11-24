@@ -109,7 +109,8 @@ class Music(private val ctx: Context, private val speaker: Speaker) {
 
     private suspend fun resume() {
         speaker.say("Playing.")
-        pressKey(KeyEvent.KEYCODE_MEDIA_PLAY)
+        val c = MediaAccess.controller(ctx, SPOTIFY)
+        if (c != null) runCatching { c.transportControls.play() } else pressKey(KeyEvent.KEYCODE_MEDIA_PLAY)
         if (waitForMusic(2500)) return
         // Nothing resumed (e.g. Spotify was closed): ask Spotify to play something
         if (!installed(SPOTIFY)) return speaker.say("Spotify isn't installed.")
@@ -123,6 +124,19 @@ class Music(private val ctx: Context, private val speaker: Speaker) {
         if (query.isBlank()) return resume()
         if (!installed(SPOTIFY)) return speaker.say("Spotify isn't installed.")
         speaker.say("Playing $query on Spotify.")
+        // Best way: Spotify's own player plays the first result (needs notification access)
+        if (MediaAccess.granted(ctx)) {
+            var c = MediaAccess.controller(ctx, SPOTIFY)
+            if (c == null) {                               // Spotify closed: open it, wait for its player
+                ctx.packageManager.getLaunchIntentForPackage(SPOTIFY)?.let { launch(it) }
+                var waited = 0L
+                while (c == null && waited < 8000) { delay(400); waited += 400; c = MediaAccess.controller(ctx, SPOTIFY) }
+            }
+            if (c != null && MediaAccess.playFromSearch(c, query)) {
+                if (waitForMusic(8000)) return
+                ActivityLog.add(ctx, "Spotify player didn't start '$query'; trying the search intent")
+            }
+        } else ActivityLog.add(ctx, "No notification access: Spotify may only show search results")
         val ok = launch(Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH).setPackage(SPOTIFY)
             .putExtra(SearchManager.QUERY, query)
             .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*"))

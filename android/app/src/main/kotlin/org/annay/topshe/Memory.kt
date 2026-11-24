@@ -6,7 +6,7 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * What Topshe learns from you, instantly, on the phone (no retraining needed):
+ * What Alfred learns from you, instantly, on the phone (no retraining needed):
  *  - facts:        "remember that my shuttle leaves at 8:10" -> added to every prompt
  *  - corrections:  "no, I meant ..." -> next time the same words do the corrected thing
  *  - contacts:     which "Rahul" you picked -> offered first next time

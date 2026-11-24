@@ -21,7 +21,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * Home: the conversation with Topshe (voice and typed), a box to type to it, shortcuts,
+ * Home: the conversation with Alfred (voice and typed), a box to type to it, shortcuts,
  * and an on/off pill. Typed requests run exactly like spoken ones; questions it asks back
  * (which contact? call? send?) come with tap buttons.
  */
@@ -49,12 +49,12 @@ class HomeScreen(private val act: Activity, private val k: Kit,
     private val banner = k.card(null)
     private val bannerText = k.text("", 14f, Look.TEXT)
     private val options = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
-    private val thinking = k.text("Topshe is thinking...", 13f, Look.MUTED).apply { visibility = View.GONE; setPadding(k.dp(4), k.dp(2), 0, k.dp(4)) }
+    private val thinking = k.text("Alfred is thinking...", 13f, Look.MUTED).apply { visibility = View.GONE; setPadding(k.dp(4), k.dp(2), 0, k.dp(4)) }
     private var stamp = -1L
     private var live: TextView? = null          // the answer while it's being written
     private var busy = false
     private var busySince = 0L
-    private var answered = false               // Topshe already replied (it may still be finishing up)
+    private var answered = false               // Alfred already replied (it may still be finishing up)
     private var warmed = false
     private var pending: CompletableDeferred<String?>? = null
     private var speaker: Speaker? = null
@@ -68,7 +68,7 @@ class HomeScreen(private val act: Activity, private val k: Kit,
         // Header: wordmark + "Hey Annay" on the left, listening pill on the right
         val head = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         val titles = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
-        titles.addView(k.wordmark("TOPSHE").apply { textSize = 38f })
+        titles.addView(k.wordmark("ALFRED").apply { textSize = 38f })
         titles.addView(k.text("Hey Annay", 15f, Look.MUTED, Look.semibold))
         head.addView(titles, LinearLayout.LayoutParams(0, -2, 1f))
         col.addView(head)
@@ -122,7 +122,7 @@ class HomeScreen(private val act: Activity, private val k: Kit,
         // Type box + send + mic
         val row = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, 0, 0, k.dp(10)) }
         input.apply {
-            hint = "Message Topshe..."
+            hint = "Message Alfred..."
             textSize = 15f; setTextColor(Look.TEXT); setHintTextColor(0x80FFFFFF.toInt())
             background = k.rounded(0xD9141418.toInt(), 22, 1, Look.EDGE)
             setPadding(k.dp(16), k.dp(12), k.dp(16), k.dp(12))
@@ -139,7 +139,7 @@ class HomeScreen(private val act: Activity, private val k: Kit,
         return col
     }
 
-    /** 🎙: listen to one request right now (starts Topshe if it's off). */
+    /** 🎙: listen to one request right now (starts Alfred if it's off). */
     private fun talkNow() {
         if (Store.missing(act).isNotEmpty() ||
             act.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -158,7 +158,7 @@ class HomeScreen(private val act: Activity, private val k: Kit,
             s == ListenerService.State.PAUSED -> Triple(Look.PAUSED, "Paused - mic is off", "Tap here to resume")
             s == ListenerService.State.HEARING -> Triple(0xFF60A5FA.toInt(), "I'm listening - speak now", "Stop talking and I'll answer")
             s == ListenerService.State.BUSY -> Triple(0xFFC084FC.toInt(), "Working on it...", "")
-            else -> Triple(Look.ON, "Listening for \"Topshe\"", "Say \"Topshe\", then your request. Or tap the mic")
+            else -> Triple(Look.ON, "Listening for \"Alfred\"", "Say \"Alfred\", then your request. Or tap the mic")
         }
         (orb.background as GradientDrawable).setColor(color)
         statusTitle.text = title
@@ -184,7 +184,7 @@ class HomeScreen(private val act: Activity, private val k: Kit,
         banner.visibility = if (missing.isEmpty()) View.GONE else View.VISIBLE
         bannerText.text = "Finish setup: ${missing.joinToString()}. Tap to open Settings."
         if (missing.isEmpty() && ChatLog.stamp(act) == 0L && chatList.childCount == 0)
-            chatList.addView(k.bubble(false, "Hey Annay! Say \"Topshe\" or type here. Try \"play Kesariya\", \"wake me up at 7\", or ask me anything.", false))
+            chatList.addView(k.bubble(false, "Hey Annay! Say \"Alfred\" or type here. Try \"play Kesariya\", \"wake me up at 7\", or ask me anything.", false))
     }
 
     /** Called every second: shows new messages (also ones from voice). */
@@ -193,7 +193,7 @@ class HomeScreen(private val act: Activity, private val k: Kit,
         if (s != stamp) { stamp = s; render() }
         if (busy && pending == null && live == null && !answered && thinking.text != "Stopping...") {
             val secs = (System.currentTimeMillis() - busySince) / 1000
-            if (secs >= 2) thinking.text = "Topshe is thinking... ${secs}s  ·  tap to stop"
+            if (secs >= 2) thinking.text = "Alfred is thinking... ${secs}s  ·  tap to stop"
         }
     }
 
@@ -236,7 +236,7 @@ class HomeScreen(private val act: Activity, private val k: Kit,
         busySince = System.currentTimeMillis()
         answered = false
         ChatLog.add(act, true, t, "typed"); tick()
-        thinking.text = "Topshe is thinking..."; thinking.visibility = View.VISIBLE
+        thinking.text = "Alfred is thinking..."; thinking.visibility = View.VISIBLE
         val eng = engine()                       // created on the main thread (it starts text-to-speech)
         scope.launch {
             val keep = withContext(Dispatchers.Default) {
@@ -266,7 +266,7 @@ class HomeScreen(private val act: Activity, private val k: Kit,
         scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
     }
 
-    /** Your reply to a question Topshe asked (typed or a tapped button). */
+    /** Your reply to a question Alfred asked (typed or a tapped button). */
     private fun answer(shown: String, value: String) {
         ChatLog.add(act, true, shown, "typed"); tick()
         options.removeAllViews()
@@ -283,7 +283,7 @@ class HomeScreen(private val act: Activity, private val k: Kit,
             val r = withTimeoutOrNull(120_000) { d.await() }
             withContext(Dispatchers.Main) {
                 pending = null; options.removeAllViews(); answered = false; busySince = System.currentTimeMillis()
-                thinking.text = "Topshe is thinking..."; thinking.visibility = View.VISIBLE
+                thinking.text = "Alfred is thinking..."; thinking.visibility = View.VISIBLE
             }
             return r
         }
@@ -306,7 +306,7 @@ class HomeScreen(private val act: Activity, private val k: Kit,
     }
 }
 
-/** Memory: what Topshe knows about you. Add or delete facts; it uses them in every answer. */
+/** Memory: what Alfred knows about you. Add or delete facts; it uses them in every answer. */
 class MemoryScreen(private val act: Activity, private val k: Kit) {
     private val memory = Memory(act)
     private val list = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
@@ -316,7 +316,7 @@ class MemoryScreen(private val act: Activity, private val k: Kit) {
     init {
         val col = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL; setPadding(k.dp(18), k.dp(24), k.dp(18), k.dp(24)) }
         col.addView(k.text("Memory", 30f, Look.TEXT, Look.black))
-        col.addView(k.text("What Topshe knows about you. It uses these in every answer.", 14f))
+        col.addView(k.text("What Alfred knows about you. It uses these in every answer.", 14f))
         val add = k.card("Add something")
         val box = k.input("e.g. my gym is at 7 pm", "")
         add.addView(box)
@@ -328,7 +328,7 @@ class MemoryScreen(private val act: Activity, private val k: Kit) {
         c.addView(list)
         col.addView(c)
         val tips = k.card("By voice")
-        tips.addView(k.text("\"Topshe, remember that ...\" adds, \"Topshe, forget ...\" removes. If it gets something wrong, say \"no, I meant ...\" and it won't repeat the mistake.", 13f))
+        tips.addView(k.text("\"Alfred, remember that ...\" adds, \"Alfred, forget ...\" removes. If it gets something wrong, say \"no, I meant ...\" and it won't repeat the mistake.", 13f))
         tips.addView(info.apply { setPadding(0, k.dp(10), 0, 0) })
         col.addView(tips)
         view = ScrollView(act).apply { isVerticalScrollBarEnabled = false; addView(col) }

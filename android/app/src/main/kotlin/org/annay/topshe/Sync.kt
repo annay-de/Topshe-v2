@@ -26,9 +26,9 @@ import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 /**
- * Keeps Topshe learning, with no effort from you:
- *  1. Uploads what you said + what Topshe did (and your saved facts) to the private `data` branch.
- *  2. Every Sunday the repo retrains Topshe on Kaggle (see training/pipeline.py).
+ * Keeps Alfred learning, with no effort from you:
+ *  1. Uploads what you said + what Alfred did (and your saved facts) to the private `data` branch.
+ *  2. Every Sunday the repo retrains Alfred on Kaggle (see training/pipeline.py).
  *  3. Downloads the new brain on Wi-Fi once it has passed its tests, and switches to it.
  *     No backup copy is kept on the phone: every brain stays in the repo's
  *     Releases, so "go back one brain" simply re-downloads the previous one.
@@ -323,10 +323,10 @@ object Sync {
 
     private fun notify(ctx: Context, text: String, id: Int = 42) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel("topshe_updates", "Topshe updates", NotificationManager.IMPORTANCE_DEFAULT))
+        nm.createNotificationChannel(NotificationChannel("topshe_updates", "Alfred updates", NotificationManager.IMPORTANCE_DEFAULT))
         nm.notify(id, android.app.Notification.Builder(ctx, "topshe_updates")
             .setSmallIcon(R.drawable.ic_stat_topshe)
-            .setContentTitle("Topshe").setContentText(text).setAutoCancel(true).build())
+            .setContentTitle("Alfred").setContentText(text).setAutoCancel(true).build())
     }
 
     /** Full sync. Brain downloads only happen on unmetered (Wi-Fi) networks. */
@@ -347,8 +347,8 @@ object Sync {
             }
         }.onFailure { out.append("Brain check failed: ${it.message}") }
         runCatching { Updater.available(ctx) }.getOrNull()?.let { n ->
-            out.append("\nApp build $n is available: open Topshe and tap Update the app.")
-            notify(ctx, "App build $n is ready. Open Topshe and tap Update the app.", 43)
+            out.append("\nApp build $n is available: open Alfred and tap Update the app.")
+            notify(ctx, "App build $n is ready. Open Alfred and tap Update the app.", 43)
         }
         return out.toString().trim()
     }

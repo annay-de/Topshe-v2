@@ -26,7 +26,7 @@ import kotlin.math.sqrt
 
 /**
  * Open-source voice models (sherpa-onnx, Apache-2.0), downloaded once into the app:
- *  - wake word: a small keyword spotter that listens for any word you type ("TOPSHE")
+ *  - wake word: a small keyword spotter that listens for any word you type ("ALFRED")
  *  - voice check: a speaker-embedding model (WeSpeaker ResNet34, trained on VoxCeleb)
  *  - speech-to-text: OpenAI Whisper "base" (multilingual, int8), run offline by sherpa-onnx
  *  - Bengali speech-to-text: a streaming zipformer trained on Bengali (Vosk), also by sherpa-onnx
@@ -55,7 +55,7 @@ object VoiceModels {
             val c = u.openConnection() as HttpURLConnection
             c.instanceFollowRedirects = false
             c.connectTimeout = 30_000; c.readTimeout = 90_000
-            c.setRequestProperty("User-Agent", "Topshe-Android")
+            c.setRequestProperty("User-Agent", "Alfred-Android")
             val code = try { c.responseCode } catch (e: Exception) {
                 throw IllegalStateException("can't reach ${u.host} (${e.javaClass.simpleName}: ${e.message})", e)
             }
@@ -189,13 +189,21 @@ object VoiceModels {
     }
 
     /**
-     * Turns spellings like "TOPSHE" into the model's sub-word tokens (greedy longest match
-     * on tokens.txt), one keyword line per spelling. All lines share the label @TOPSHE.
+     * Turns spellings like "ALFRED" into the model's sub-word tokens (greedy longest match
+     * on tokens.txt), one keyword line per spelling. All lines share the label @ALFRED.
      */
+    /** Exact sub-word spellings from the wake model's bpe.model (the greedy guess below can differ). */
+    private val EXACT = mapOf(
+        "ALFRED" to "▁A L F RE D", "HEY ALFRED" to "▁HE Y ▁A L F RE D", "OK ALFRED" to "▁O K ▁A L F RE D",
+        "AL FRED" to "▁A L ▁F RE D", "ELFRED" to "▁E L F RE D", "TOP SHAY" to "▁TO P ▁SHA Y", "TOP SHE" to "▁TO P ▁SHE",
+        "TOPSHE" to "▁TO P S HE")
+
     fun keywordLines(ctx: Context, spellings: String): List<String> {
         val vocab = File(Store.wakeModel(ctx), "tokens.txt").readLines()
             .mapNotNull { it.trim().split(Regex("\\s+")).firstOrNull() }.toHashSet()
         return spellings.split(',').map { it.trim().uppercase() }.filter { it.isNotEmpty() }.mapNotNull { spelling ->
+            // The model's own spelling (from its bpe.model) for the usual phrases, with a sensitivity boost
+            EXACT[spelling]?.let { return@mapNotNull "$it :2.0 @ALFRED" }
             val out = mutableListOf<String>()
             for (word in spelling.split(Regex("\\s+"))) {
                 val s = "▁" + word.filter { it.isLetter() || it == '\'' }
@@ -208,7 +216,7 @@ object VoiceModels {
                     i = j
                 }
             }
-            out.joinToString(" ") + " @TOPSHE"
+            out.joinToString(" ") + " @ALFRED"
         }.distinct()
     }
 

@@ -80,8 +80,8 @@ N_DISTILL = 600                # general chat examples (made once, reused every 
 N_STYLE = 1500                 # your past messages used per run
 """)
 
-gen_src = (HERE / "make_dataset_v4.py").read_text().split('if __name__ == "__main__":')[0]
-code("# 3. Training data generator (training/make_dataset_v4.py: English + Bengali/Banglish)\n" + gen_src)
+gen_src = (HERE / "make_dataset_v5.py").read_text().split('if __name__ == "__main__":')[0]
+code("# 3. Training data generator (training/make_dataset_v5.py: English + Bengali/Banglish)\n" + gen_src)
 
 code("""# 4. Inputs from the topshe-data dataset (all optional)
 def find(name):
@@ -336,7 +336,7 @@ ev["chat_ok"] = all(5 <= len(a) <= 600 and not a.startswith("{") for a in sample
 if ROLE == "chat":     # knows who it is, and answers Bengali in Bengali
     who = generate(CHAT_SYSTEM, "who are you?", 60).lower()
     bn = samples["পথের পাঁচালী কে বানিয়েছিল?"]
-    ev["chat_identity"] = "topshe" in who
+    ev["chat_identity"] = "alfred" in who
     ev["chat_bengali"] = sum("\u0980" <= ch <= "\u09ff" for ch in bn) > len(bn) // 3
 ev.update({"train_rows": len(train), "your_interactions": len(interactions), "base_model": BASE_MODEL,
            "loss_last": losses[-1], "minutes_to_eval": round((time.time() - T0) / 60)})

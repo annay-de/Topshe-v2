@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit
 /**
  * Big downloads (the brains, the voice models) as a foreground job with its own notification:
  * Android keeps it running with the screen off, while you use other apps, and through Realme's
- * battery saver. Tapping buttons in Topshe doesn't touch it, a second tap doesn't start a second
+ * battery saver. Tapping buttons in Alfred doesn't touch it, a second tap doesn't start a second
  * copy, and if the network drops it pauses and later resumes where it stopped (not from zero).
  */
 class DownloadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
@@ -98,19 +98,19 @@ class DownloadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
         val now = SystemClock.elapsedRealtime()
         if (force || now - lastShown > 2000) {
             lastShown = now
-            android.util.Log.i("Topshe", msg)
+            android.util.Log.i("Alfred", msg)
             runCatching { setForegroundAsync(info(msg)) }
         }
     }
 
     private fun info(text: String): ForegroundInfo {
         val nm = applicationContext.getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel(CHANNEL, "Topshe downloads", NotificationManager.IMPORTANCE_LOW))
+        nm.createNotificationChannel(NotificationChannel(CHANNEL, "Alfred downloads", NotificationManager.IMPORTANCE_LOW))
         val m = Regex("(\\d+) / (\\d+) MB").find(text)
         val pct = m?.let { (it.groupValues[1].toLong() * 100 / it.groupValues[2].toLong().coerceAtLeast(1)).toInt() }
         val n = android.app.Notification.Builder(applicationContext, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle(if (isBrain) "Topshe: downloading the brain" else "Topshe: downloading voice models")
+            .setContentTitle(if (isBrain) "Alfred: downloading the brain" else "Alfred: downloading voice models")
             .setContentText(text)
             .setProgress(100, pct ?: 0, pct == null)       // progress bar in the notification too
             .setOngoing(true)

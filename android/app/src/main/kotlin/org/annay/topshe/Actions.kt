@@ -13,11 +13,11 @@ import org.json.JSONObject
 import java.util.Calendar
 
 /**
- * Runs the action the model picked. Only these actions exist - Topshe can't pay, delete,
+ * Runs the action the model picked. Only these actions exist - Alfred can't pay, delete,
  * install or change anything outside this list.
  *
  * Calls and messages always ask "yes or no" first. If more than one contact matches a
- * name, Topshe lists them and asks which one (so it never rings the wrong Rahul).
+ * name, Alfred lists them and asks which one (so it never rings the wrong Rahul).
  */
 class Actions(private val ctx: Context, private val speaker: Speaker,
               private val memory: Memory, private val music: Music) {
@@ -90,7 +90,7 @@ class Actions(private val ctx: Context, private val speaker: Speaker,
         val ok = launch(Intent(AlarmClock.ACTION_SET_ALARM)
             .putExtra(AlarmClock.EXTRA_HOUR, h)
             .putExtra(AlarmClock.EXTRA_MINUTES, m)
-            .putExtra(AlarmClock.EXTRA_MESSAGE, "Topshe")
+            .putExtra(AlarmClock.EXTRA_MESSAGE, "Alfred")
             .putExtra(AlarmClock.EXTRA_SKIP_UI, true))
         speaker.say(if (ok) "Alarm set for ${clock(h, m)}." else "I couldn't set the alarm.")
     }
@@ -203,10 +203,17 @@ class Actions(private val ctx: Context, private val speaker: Speaker,
         return chosen
     }
 
+    private val CHANGE = Regex("^(no,? )?(change it to|change the message to|make it|instead say|say instead|change to)[:,]? (.+)$")
+
+    /** Asks; if nothing was heard, asks once more (shorter) before giving up. */
+    private suspend fun askTwice(asker: Asker, question: String, again: String): String? =
+        asker.ask(question)?.takeIf { it.isNotBlank() } ?: asker.ask("Sorry, I didn't catch that. $again")
+
     /** Yes only if a yes-word was heard and no no-word (in either hearing): when in doubt, don't call or send. */
     private fun isYes(s: String?): Boolean {
         val w = words(s ?: return false)
-        val yes = setOf("yes", "yeah", "yep", "yup", "haan", "han", "ha", "ok", "okay", "sure", "correct", "ji", "go", "do",
+        val yes = setOf("yes", "yeah", "yep", "yup", "yea", "ya", "haan", "han", "ha", "ok", "okay", "sure", "correct", "ji", "go", "do",
+            "send", "call", "please", "absolutely", "definitely", "right", "fine", "alright",
             "হ্যাঁ", "হ্যা", "হাঁ", "হুম", "ঠিক", "অবশ্যই", "কর", "করো", "পাঠা", "পাঠাও", "দে", "দাও", "ইয়েস", "ওকে", "ওইটাই")
         val no = setOf("no", "nope", "nahi", "na", "cancel", "stop", "don't", "dont", "wait",
             "না", "নাহ", "থাক", "বাতিল", "ক্যানসেল", "দাঁড়া", "দাঁড়াও", "নো", "উঁহু", "ভুল")
@@ -215,7 +222,7 @@ class Actions(private val ctx: Context, private val speaker: Speaker,
 
     private suspend fun call(name: String, asker: Asker) {
         val p = pickPerson(name, asker) ?: return
-        if (!isYes(asker.ask("Call ${p.name}? Yes or no?"))) { outcome = "cancelled"; return speaker.say("Okay, not calling.") }
+        if (!isYes(askTwice(asker, "Call ${p.name}?", "Should I call ${p.name}? Say yes or no."))) { outcome = "cancelled"; return speaker.say("Okay, not calling.") }
         val ok = launch(Intent(Intent.ACTION_CALL, Uri.parse("tel:" + Uri.encode(p.number))))
         outcome = if (ok) "confirmed" else "failed"
         if (!ok) speaker.say("I couldn't start the call.")
@@ -226,7 +233,16 @@ class Actions(private val ctx: Context, private val speaker: Speaker,
         val p = pickPerson(name, asker) ?: return
         val viaSms = app.equals("SMS", ignoreCase = true)
         val how = if (viaSms) "by SMS" else "on WhatsApp"
-        if (!isYes(asker.ask("Send ${p.name} $how: $text. Yes or no?"))) { outcome = "cancelled"; return speaker.say("Okay, not sent.") }
+        // Read it back; you can say yes, no, or "change it to ..." (up to 3 times)
+        var msg = text
+        var answer = askTwice(asker, "Send ${p.name} $how: $msg. Send it?", "Should I send it? Say yes, no, or change it to something else.")
+        repeat(3) {
+            val change = answer?.let { CHANGE.find(it.lowercase().substringAfter("english:").substringBefore("\nbangla:").trim()) } ?: return@repeat
+            msg = change.groupValues[3].trim().ifBlank { return@repeat }
+            answer = askTwice(asker, "Okay: $msg. Send it?", "Should I send it? Say yes or no.")
+        }
+        if (!isYes(answer)) { outcome = "cancelled"; return speaker.say("Okay, not sent.") }
+        val text = msg
         outcome = "confirmed"
         if (viaSms) {
             runCatching {

@@ -9,7 +9,7 @@ import android.os.Build
 import org.json.JSONArray
 
 /**
- * App updates without the browser: Topshe fetches the newest build-N APK from your repo's Releases
+ * App updates without the browser: Alfred fetches the newest build-N APK from your repo's Releases
  * (with the same GitHub token) and hands it to Android's own installer, which asks you to confirm.
  * Installs coming from an app rather than a browser or file manager aren't hit by Play Protect's
  * "sideloaded from the internet" block, so there's no need to switch Play Protect off each time.
@@ -54,7 +54,7 @@ object Updater {
         val url = b.url
         val totalMb = b.bytes shr 20
         if (n <= installedBuild(ctx)) return "The app is up to date (build ${installedBuild(ctx)})."
-        if (!canInstall(ctx)) return "Allow Topshe to install updates first, then tap again."
+        if (!canInstall(ctx)) return "Allow Alfred to install updates first, then tap again."
         val installer = ctx.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
             .apply { setAppPackageName(ctx.packageName) }

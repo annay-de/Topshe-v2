@@ -15,7 +15,7 @@ class TopsheTile : TileService() {
         val s = ListenerService.state
         tile.state = if (s == ListenerService.State.LISTENING || s == ListenerService.State.BUSY || s == ListenerService.State.HEARING ||
             s == ListenerService.State.STARTING) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-        tile.label = "Topshe"
+        tile.label = "Alfred"
         if (Build.VERSION.SDK_INT >= 29) tile.subtitle = when (s) {
             ListenerService.State.OFF -> "Off"
             ListenerService.State.PAUSED -> "Paused"

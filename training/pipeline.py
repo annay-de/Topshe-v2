@@ -243,7 +243,7 @@ def gate_chat(ev, prev):
     if not ev.get("chat_ok", False):
         reasons.append("chat answers looked broken")
     if not ev.get("chat_identity", False):
-        reasons.append("didn't say it's Topshe")
+        reasons.append("didn't say it's Alfred")
     if not ev.get("chat_bengali", False):
         reasons.append("didn't answer a Bengali question in Bengali")
     if ev.get("memory_chat", 0) < 0.5:

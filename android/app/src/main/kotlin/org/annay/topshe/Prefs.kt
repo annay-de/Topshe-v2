@@ -7,6 +7,8 @@ import java.util.Date
 import java.util.Locale
 
 /** Settings saved on the phone. */
+const val DEFAULT_WAKE = "ALFRED, HEY ALFRED, OK ALFRED, AL FRED"
+
 class Prefs(ctx: Context) {
     private val sp = ctx.getSharedPreferences("topshe", Context.MODE_PRIVATE)
 
@@ -22,8 +24,14 @@ class Prefs(ctx: Context) {
 
     /** How the wake word may be spelled, comma separated. Each spelling is tried. */
     var wakeSpellings: String
-        get() = sp.getString("wakeSpellings", "TOPSHE, TOP SHAY, TOPSHAY") ?: "TOPSHE"
-        set(v) = sp.edit().putString("wakeSpellings", v).apply()
+        // Build 47 renamed the assistant: older saved spellings (Topshe) are replaced once
+        get() = if (sp.getInt("wakeVer", 0) < 47) DEFAULT_WAKE else sp.getString("wakeSpellings", DEFAULT_WAKE) ?: DEFAULT_WAKE
+        set(v) = sp.edit().putString("wakeSpellings", v).putInt("wakeVer", 47).apply()
+
+    /** Bengali hearing (a second speech model on every request). Off by default: faster, less noise. */
+    var bengaliHearing: Boolean
+        get() = sp.getBoolean("bengaliHearing", false)
+        set(v) = sp.edit().putBoolean("bengaliHearing", v).apply()
 
     /** CPU threads for the brain (set by the speed test). */
     var threads: Int
@@ -31,13 +39,13 @@ class Prefs(ctx: Context) {
         get() = if (sp.getInt("threadsVer", 0) < 2) 2 else sp.getInt("threads", 2)
         set(v) = sp.edit().putInt("threads", v).putInt("threadsVer", 2).apply()
 
-    /** GitHub token (fine-grained, Contents read/write on the Topshe-v2 repo): uploads data, downloads brains. */
+    /** GitHub token (fine-grained, Contents read/write on the Alfred-v2 repo): uploads data, downloads brains. */
     var githubToken: String
         get() = sp.getString("githubToken", "") ?: ""
         set(v) = sp.edit().putString("githubToken", v.trim()).apply()
 
     var githubRepo: String
-        get() = sp.getString("githubRepo", "annay-de/Topshe-v2") ?: "annay-de/Topshe-v2"
+        get() = sp.getString("githubRepo", "annay-de/Alfred-v2") ?: "annay-de/Alfred-v2"
         set(v) = sp.edit().putString("githubRepo", v.trim()).apply()
 
     /** Version of the brain on the phone (0 = none from the weekly pipeline yet). */
@@ -49,7 +57,7 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("chatVersion", 0)
         set(v) = sp.edit().putInt("chatVersion", v).apply()
 
-    /** Chat screen: speak Topshe's replies out loud too (off = text only). */
+    /** Chat screen: speak Alfred's replies out loud too (off = text only). */
     var speakTyped: Boolean
         get() = sp.getBoolean("speakTyped", false)
         set(v) = sp.edit().putBoolean("speakTyped", v).apply()
@@ -83,7 +91,7 @@ class Prefs(ctx: Context) {
         set(v) = sp.edit().putString("sttLanguage", v).apply()
 }
 
-/** Where Topshe keeps its files (all inside the app's private storage). */
+/** Where Alfred keeps its files (all inside the app's private storage). */
 object Store {
     fun brain(ctx: Context) = File(ctx.filesDir, "topshe_brain.gguf")              // command brain (weekly; Qwen 3.5 0.8B)
     fun promptTemplate(ctx: Context) = File(ctx.filesDir, "prompt_template.json")
@@ -113,19 +121,19 @@ object Store {
     }
 
     fun missing(ctx: Context): List<String> = buildList {
-        if (!hasBrain(ctx)) add("brain (sync with GitHub, or pick a .gguf)")
+        if (!hasBrain(ctx)) add("brain (Settings > Sync now)")
         if (!voiceModelsReady(ctx)) add("voice models (download)")
         if (!voiceProfile(ctx).exists()) add("your voice recording")
     }
 }
 
-/** Small activity log shown in the app, so you can see what Topshe heard and did. */
+/** Small activity log shown in the app, so you can see what Alfred heard and did. */
 object ActivityLog {
     private val fmt = SimpleDateFormat("dd MMM HH:mm:ss", Locale.US)
 
     @Synchronized
     fun add(ctx: Context, msg: String) {
-        android.util.Log.i("Topshe", msg)            // also visible over USB (adb logcat -s Topshe)
+        android.util.Log.i("Alfred", msg)            // also visible over USB (adb logcat -s Alfred)
         val f = Store.logFile(ctx)
         val lines = (if (f.exists()) f.readLines() else emptyList()).takeLast(199) +
             "${fmt.format(Date())}  $msg"

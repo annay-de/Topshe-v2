@@ -13,8 +13,8 @@ import kotlin.math.sqrt
 const val SAMPLE_RATE = 16000
 
 /**
- * Topshe's ear. One owner of the microphone, start to finish:
- *  1. A small open-source keyword spotter listens for "Topshe" (the only thing running while idle).
+ * Alfred's ear. One owner of the microphone, start to finish:
+ *  1. A small open-source keyword spotter listens for "Alfred" (the only thing running while idle).
  *  2. After the wake word, records your command until you stop talking.
  *  3. A voice-fingerprint model checks the voice (wake word + command) is yours.
  *  4. Whisper (English) and a Bengali model both turn the command into text, fully offline.
@@ -56,7 +56,7 @@ class Ear(ctx: Context, prefs: Prefs) {
         return true
     }
 
-    /** Blocks until "Topshe" is heard. Returns false if stopped. */
+    /** Blocks until "Alfred" is heard. Returns false if stopped. */
     fun waitForWake(keepGoing: () -> Boolean): Boolean {
         while (keepGoing()) {
             if (!readFully(frame)) return false
@@ -72,7 +72,7 @@ class Ear(ctx: Context, prefs: Prefs) {
         return false
     }
 
-    /** Throws away audio that built up while Topshe was busy or talking. */
+    /** Throws away audio that built up while Alfred was busy or talking. */
     fun flush(ms: Int = 300) {
         val buf = ShortArray(SAMPLE_RATE * ms / 1000)
         readFully(buf)
@@ -149,7 +149,11 @@ class Ear(ctx: Context, prefs: Prefs) {
     }
 
     /** Both hearings at once (the two models run side by side, about 0.2 s extra). */
+    /** Bengali hearing (Settings > Advanced). Off: only the English model runs - faster, less noise. */
+    @Volatile var bengali = false
+
     fun hear(pcm: ShortArray): Hearing {
+        if (!bengali) return Hearing(transcribe(pcm), "")
         var bn = ""
         val t = Thread { bn = runCatching { transcribeBn(pcm) }.getOrDefault("") }.apply { start() }
         val en = transcribe(pcm)

@@ -25,7 +25,7 @@ import org.json.JSONObject
 
 /**
  * The listening service. Three states, all switchable from the notification and the tile:
- *  - LISTENING: mic on, waiting for "Topshe"
+ *  - LISTENING: mic on, waiting for "Alfred"
  *  - PAUSED:    mic fully off, service waiting for you to resume
  *  - OFF:       killed. Mic off, model unloaded, nothing running.
  * It never turns itself on - only you can (app, tile or notification).
@@ -50,7 +50,7 @@ class ListenerService : Service() {
 
         @Volatile var state = State.OFF
             private set
-        /** What just happened, for the screen ("Heard Topshe, but it didn't sound like you"). */
+        /** What just happened, for the screen ("Heard Alfred, but it didn't sound like you"). */
         @Volatile var lastEvent = ""
             private set
         @Volatile var lastEventAt = 0L
@@ -76,7 +76,7 @@ class ListenerService : Service() {
     private lateinit var music: Music
     private lateinit var memory: Memory
 
-    /** The last thing Topshe did, so "no, I meant ..." can correct it. */
+    /** The last thing Alfred did, so "no, I meant ..." can correct it. */
     private data class Last(val heard: String, val action: JSONObject, val at: Long)
     private var last: Last? = null
 
@@ -128,7 +128,7 @@ class ListenerService : Service() {
                 }
                 val e = Ear(this@ListenerService, prefs).also { ear = it }
                 e.open()
-                setState(State.LISTENING, "Listening for \"Topshe\"")
+                setState(State.LISTENING, "Listening for \"Alfred\"")
                 ActivityLog.add(this@ListenerService, "Listening (brain ${Brain.loadedName}, ${memory.facts().size} facts)")
                 // Get the brain's fixed instructions ready while you're not talking yet
                 scope.launch { runCatching { Brain.warmUp(memory.facts()) }; logSpeed() }
@@ -139,7 +139,7 @@ class ListenerService : Service() {
                     if (!woke && !pushed) break
                     if (!handleWake(e, pushed)) { pauseFromInside(); break }
                     e.flush()
-                    if (isActive) setState(State.LISTENING, "Listening for \"Topshe\"")
+                    if (isActive) setState(State.LISTENING, "Listening for \"Alfred\"")
                 }
             } catch (t: Throwable) {
                 if (t !is kotlinx.coroutines.CancellationException) {
@@ -153,46 +153,63 @@ class ListenerService : Service() {
         }
     }
 
-    /** Handles one "Topshe ..." request. Returns false if you asked it to stop. */
+    /** Handles one "Alfred ..." request. Returns false if you asked it to stop. */
     private suspend fun handleWake(e: Ear, pushed: Boolean = false): Boolean {
         speaker.beep()
         setState(State.HEARING, "Go ahead, I'm listening...")
-        event(if (pushed) "Listening - speak now" else "Heard \"Topshe\" - speak now")
-        val u = if (pushed) e.capture(waitMs = 6000) else e.capture()
+        event(if (pushed) "Listening - speak now" else "Heard \"Alfred\" - speak now")
+        e.bengali = prefs.bengaliHearing
+        var u = if (pushed) e.capture(waitMs = 6000) else e.capture()
         if (pushed && u.speech.isEmpty()) { event("Didn't hear anything - tap the mic and speak"); return true }
         if (!pushed) {                     // 🎙 tapped on your phone = it's you; a wake word must be your voice
             val score = e.voiceScore(u.all)
             if (score == null || score < prefs.voiceThreshold) {
-                event("Heard \"Topshe\", but it didn't sound like you (" +
+                event("Heard \"Alfred\", but it didn't sound like you (" +
                     (score?.let { "%.2f".format(it) } ?: "too short") + "). Re-record your voice or lower the voice check in Settings.")
                 ActivityLog.add(this, "Ignored a wake - voice score ${score?.let { "%.2f".format(it) } ?: "n/a"}")
                 return true
             }
         }
         val score = 1f
-        val h = e.hear(u.speech).withoutWakeWord()
-        val dual = Brain.dualHearing
+        var h = e.hear(u.speech).withoutWakeWord()
+        // Just "Alfred" (or "Hey Alfred"): ask what you want, don't guess
+        if (h.en.replace(Regex("[^a-zA-Z]"), "").length < 2 && h.bn.isBlank()) {
+            speaker.say("Yes?")
+            e.flush(150)
+            speaker.beep()
+            setState(State.HEARING, "Go ahead, I'm listening...")
+            u = e.capture(waitMs = 6000)
+            if (u.speech.isEmpty()) { event("Didn't hear a request"); return true }
+            h = e.hear(u.speech).withoutWakeWord()
+        }
+        val dual = Brain.dualHearing && prefs.bengaliHearing
         val heard = h.forBrain(dual)                   // what the brain sees (and what it learns from)
         ActivityLog.add(this, "Heard (voice %.2f): \"%s\"".format(score, h.shown()))
         if (if (dual) h.isBlank() else h.en.isBlank()) { event("Didn't catch the words"); speaker.say("Sorry, I didn't catch that."); return true }
+        // One stray word ("the", "you") is noise, not a request: ask again instead of guessing
+        if (!dual && isNoise(h.en)) { event("Heard only \"${h.en}\" - say it again"); speaker.say("Say that again?"); return true }
         setState(State.BUSY, "Working: ${h.shown()}")
         event("Heard: \"${h.shown()}\"")
         ChatLog.add(this, true, if (dual && h.bn.isNotBlank()) "${h.en}\n${h.bn}" else h.en, "voice")
 
         val asker = object : Actions.Asker {
             override suspend fun ask(question: String): String? {
-                speaker.say(question)
+                speaker.say(question)                    // also shown in the chat
                 e.flush(150)
-                val reply = e.capture(waitMs = 5000, endSilenceMs = 800, maxMs = 6000)
+                speaker.beep()                           // "your turn"
+                setState(State.HEARING, "Answer now...")
+                event("Waiting for your answer")
+                val reply = e.capture(waitMs = 6000, endSilenceMs = 900, maxMs = 8000)
+                setState(State.BUSY, "Working...")
                 if (reply.speech.isEmpty()) return null
                 val s = e.voiceScore(reply.speech)
-                // Short answers like "yes" may be too short to score; that's fine (you were just verified).
-                // But if it clearly isn't your voice, refuse.
-                if (s != null && s < prefs.voiceThreshold) {
+                // Short answers like "yes" are hard to score; only refuse a reply that clearly isn't you
+                if (s != null && s < prefs.voiceThreshold * 0.7f) {
                     ActivityLog.add(this@ListenerService, "Ignored a reply - not your voice (%.2f)".format(s)); return null
                 }
                 val r = e.hear(reply.speech)
                 ActivityLog.add(this@ListenerService, "Reply: \"${r.shown()}\"")
+                if (!r.isBlank()) ChatLog.add(this@ListenerService, true, r.en.ifBlank { r.bn }, "voice")
                 return r.forBrain(dual)
             }
         }
@@ -237,10 +254,26 @@ class ListenerService : Service() {
         val cmd = learned ?: quick ?: Brain.command(heard, memory.facts()).also { logSpeed() }
         if (cmd == null) { speaker.say("Sorry, I got confused. Try again?"); memory.log(heard, null, "failed"); return true }
 
+        // The brain sometimes reads noise as "stop": only stop if you actually said a stop word
+        if (cmd.optString("action") == "stop" && learned == null && quick == null && !STOP_WORDS.containsMatchIn(heard.lowercase())) {
+            event("Not sure what you meant - say it again")
+            speaker.say("Say that again?")
+            return true
+        }
         val r = actions.run(cmd, h.en.ifBlank { h.bn }, asker)
         memory.log(heard, cmd, r.outcome)
         last = if (r.outcome == "ok" || r.outcome == "confirmed") Last(heard, cmd, System.currentTimeMillis()) else null
         return r.keepListening
+    }
+
+    private val STOP_WORDS = Regex("stop|quiet|sleep|bye|enough|shut|silence|that's all|thats all|চুপ|থাম|বন্ধ|ঘুম|থাক")
+    private val ONE_WORD_OK = setOf("pause", "next", "skip", "stop", "resume", "play", "previous", "louder", "quieter",
+        "mute", "unmute", "hi", "hello", "hey", "thanks", "help", "time", "date", "yes", "no", "sleep", "bye")
+
+    /** Whisper often turns a cough or background noise into one short word. */
+    private fun isNoise(en: String): Boolean {
+        val w = en.lowercase().replace(Regex("[^a-z' ]"), " ").split(Regex("\\s+")).filter { it.isNotEmpty() }
+        return w.isEmpty() || (w.size == 1 && w[0] !in ONE_WORD_OK) || (w.size == 2 && w.all { it in setOf("the", "you", "a", "uh", "um", "thank", "oh") })
     }
 
     /** The brain's timings, so slow answers show where the time went (Settings > Activity). */
@@ -319,14 +352,14 @@ class ListenerService : Service() {
 
     private fun showNotification(text: String) {
         val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel(CHANNEL, "Topshe listening", NotificationManager.IMPORTANCE_LOW))
+        nm.createNotificationChannel(NotificationChannel(CHANNEL, "Alfred listening", NotificationManager.IMPORTANCE_LOW))
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val toggle = if (state == State.PAUSED)
             Notification.Action.Builder(null, "Resume", actionIntent(ACTION_START, 1)).build()
         else Notification.Action.Builder(null, "Pause", actionIntent(ACTION_PAUSE, 2)).build()
         val n = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_topshe)
-            .setContentTitle("Topshe")
+            .setContentTitle("Alfred")
             .setContentText(text)
             .setContentIntent(open)
             .setOngoing(true)

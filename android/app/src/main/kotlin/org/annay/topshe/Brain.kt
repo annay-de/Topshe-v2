@@ -17,10 +17,10 @@ object NativeLlama {
 }
 
 /**
- * Topshe's brains: the command brain (Qwen 3.5 0.8B, retrained weekly on your usage) turns every
+ * Alfred's brains: the command brain (Qwen 3.5 0.8B, retrained weekly on your usage) turns every
  * request into an action, quickly; the chat brain (Qwen 3.5 2B) answers questions and small talk.
  * Without a chat brain on the phone, the command brain answers chat too.
- * Everything Topshe knows about you (Memory facts) is added to every prompt.
+ * Everything Alfred knows about you (Memory facts) is added to every prompt.
  *
  * The prompt format comes from prompt_template.json, written by the trainer together with the model,
  * so the phone always uses exactly the format the model was trained with.
@@ -32,7 +32,7 @@ object Brain {
         "Actions: set_alarm, set_timer, set_reminder, open_app, call, message, tasker, media, " +
         "remember, forget, stop, chat. Use chat for questions or small talk. Reply with JSON only."
     const val CHAT_SYSTEM =
-        "You are Topshe, a friendly assistant. Answer in 1-3 short, simple sentences. " +
+        "You are Alfred, a friendly assistant. Answer in 1-3 short, simple sentences. " +
         "Talk to Annay plainly, like an adult. No lectures or disclaimers."
     const val FACTS_HEADER = "What you know about Annay:"
 
@@ -158,7 +158,7 @@ object Brain {
         }
         val out = clean(String(NativeLlama.generate(h, prefix, suffix, maxTokens, temp, threads, listener), Charsets.UTF_8))
         lastStats = (if (ch != 0L) "chat " else "") + runCatching { NativeLlama.stats() }.getOrDefault("")
-        android.util.Log.i("Topshe", lastStats)
+        android.util.Log.i("Alfred", lastStats)
         return out
     }
 
@@ -177,7 +177,12 @@ object Brain {
         parseJson(run(withFacts(if (legacy) LEGACY_CMD_SYSTEM else CMD_SYSTEM, facts), text, 96, 0f))
 
     fun chat(question: String, facts: List<String>, onText: ((String) -> Unit)? = null): String =
-        run(withFacts(CHAT_SYSTEM, facts), question, 120, 0.6f, chat = true, onText = onText)
+        run(withFacts(CHAT_SYSTEM, facts), question, 120, 0.6f, chat = true,
+            onText = onText?.let { cb -> { t: String -> cb(renamed(t)) } }).let(::renamed)
+
+    /** The current brains were trained as "Topshe"; until they're retrained, say the new name. */
+    private fun renamed(t: String) = t.replace("Topshe", "Alfred").replace("topshe", "Alfred")
+        .replace("TOPSHE", "ALFRED").replace("টপসে", "আলফ্রেড")
             .ifBlank { "Sorry, I don't have an answer for that." }
 
     /** Lenient: finds the first balanced {...} in the output. */

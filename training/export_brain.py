@@ -35,7 +35,7 @@ SMOKE_CMD = [("wake me up at 6:45 tomorrow", "set_alarm"), ("play tum hi ho", "m
              ("pause the music", "media"), ("text riya that i'm running late", "message")]
 SMOKE_CHAT = [("who directed pather panchali?", "")]      # command brain: any plain answer (not JSON)
 # chat brain: must know things, know who it is, and answer simply
-SMOKE_CHAT_BRAIN = [("who directed pather panchali?", "ray"), ("who are you?", "topshe"),
+SMOKE_CHAT_BRAIN = [("who directed pather panchali?", "ray"), ("who are you?", "alfred"),
                     ("what is an instrumental variable, simply?", "variable")]
 # Two-hearing brains: real outputs of the phone's two speech models (Whisper English | Bengali zipformer)
 SMOKE_DUAL = [("Wake me up at 6.45 tomorrow.", "উইক মিয়াপ অ্যাডসেক্স ফার্টি ফাইভ টু মরো", "set_alarm"),

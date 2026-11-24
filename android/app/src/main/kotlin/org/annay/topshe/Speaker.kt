@@ -11,7 +11,7 @@ import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
-/** Topshe's voice: Android's built-in text-to-speech (Indian English; Bengali for Bengali replies). */
+/** Alfred's voice: Android's built-in text-to-speech (Indian English; Bengali for Bengali replies). */
 class Speaker(ctx: Context) : TextToSpeech.OnInitListener {
     // (declared before the engine starts, which calls onInit)
     private var english: Locale = Locale("en", "IN")
@@ -46,7 +46,7 @@ class Speaker(ctx: Context) : TextToSpeech.OnInitListener {
     /** Chat screen with sound off: show the reply, don't speak it. */
     @Volatile var muted = false
 
-    /** Speaks and waits until finished (so the mic doesn't hear Topshe itself). */
+    /** Speaks and waits until finished (so the mic doesn't hear Alfred itself). */
     suspend fun say(text: String) {
         if (text.isBlank()) return
         echo?.invoke(text)
@@ -113,7 +113,7 @@ class Speaker(ctx: Context) : TextToSpeech.OnInitListener {
         tts.speak(text.trim(), TextToSpeech.QUEUE_ADD, null, id)
     }
 
-    /** Short beep: "I heard Topshe, go ahead". */
+    /** Short beep: "I heard Alfred, go ahead". */
     fun beep() { tone?.startTone(ToneGenerator.TONE_PROP_BEEP, 150) }
 
     fun shutdown() {

@@ -38,7 +38,7 @@
     </queries>
 
     <application
-        android:label="Topshe"
+        android:label="Alfred"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@android:style/Theme.Material.NoActionBar">
@@ -53,6 +53,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Notification access: lets Alfred control Spotify's player (play the first result) -->
+        <service
+            android:name=".MediaListener"
+            android:exported="true"
+            android:label="Alfred music control"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
 
         <service
             android:name=".ListenerService"
@@ -69,7 +80,7 @@
             android:name=".TopsheTile"
             android:exported="true"
             android:icon="@drawable/ic_stat_topshe"
-            android:label="Topshe"
+            android:label="Alfred"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />

@@ -14,15 +14,15 @@ data class Hearing(val en: String, val bn: String) {
 
     fun isBlank() = en.isBlank() && bn.isBlank()
 
-    /** Drops the wake word if the recording caught it ("Topshe, ..." / "টপসে, ..."). */
+    /** Drops the wake word if the recording caught it ("Alfred, ..." / "আলফ্রেড, ..."). */
     fun withoutWakeWord() = Hearing(
         en.replace(EN_WAKE, "").trim(),
         bn.replace(BN_WAKE, "").trim(),
     )
 
     companion object {
-        private val EN_WAKE = Regex("^(hey |ok )?(top ?sh(e|ay|ey|ae|ee)|topsy|tapshe|top se)[,.!]?\\s*", RegexOption.IGNORE_CASE)
-        private val BN_WAKE = Regex("^(এই |আচ্ছা )?(টপসে|তপসে|টোপসে|টপশি|টপসি|তবসি|টপ সে)[,।!]?\\s*")
+        private val EN_WAKE = Regex("^(hey |hi |ok |okay )?(al ?fred|alfre|elfred|alfie|top ?sh(e|ay|ey|ae|ee)|topsy|tapshe|top se)[,.!?]?\\s*", RegexOption.IGNORE_CASE)
+        private val BN_WAKE = Regex("^(এই |আচ্ছা |হে )?(আলফ্রেড|অ্যালফ্রেড|এলফ্রেড|আলফ্রেড|তপসে|টোপসে|টপশি|টপসি|তবসি|টপ সে)[,।!?]?\\s*")
 
         /** Text has Bengali letters (used to pick the Bengali voice). */
         fun hasBengali(s: String) = s.any { it in 'ঀ'..'৿' }

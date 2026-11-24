@@ -16,7 +16,7 @@ class ReminderReceiver : BroadcastReceiver() {
         nm.notify((System.currentTimeMillis() % Int.MAX_VALUE).toInt(),
             Notification.Builder(ctx, "topshe_reminders")
                 .setSmallIcon(R.drawable.ic_stat_topshe)
-                .setContentTitle("Topshe reminder")
+                .setContentTitle("Alfred reminder")
                 .setContentText(text.replaceFirstChar { it.uppercase() })
                 .setAutoCancel(true)
                 .build())
