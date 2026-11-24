@@ -34,10 +34,10 @@ class DownloadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
         private const val CHANNEL = "topshe_downloads"
 
         /** Newest brain (or [target], or going back one with [rollback]). Waits for Wi-Fi. */
-        fun brain(ctx: Context, target: Int? = null, rollback: Boolean = false) {
-            Prefs(ctx).brainDl = "Brain download queued (starts on Wi-Fi)..."
+        fun brain(ctx: Context, target: Int? = null, rollback: Boolean = false, anyNetwork: Boolean = false) {
+            Prefs(ctx).brainDl = if (anyNetwork) "Brain download queued..." else "Brain download queued (starts on Wi-Fi)..."
             enqueue(ctx, BRAIN, workDataOf("kind" to "brain", "target" to (target ?: -1), "rollback" to rollback),
-                NetworkType.UNMETERED, replace = rollback)
+                if (anyNetwork) NetworkType.CONNECTED else NetworkType.UNMETERED, replace = rollback || anyNetwork)
         }
 
         /** Wake word, voice check and speech models (about 330 MB). */

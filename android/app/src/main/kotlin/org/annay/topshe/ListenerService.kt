@@ -37,23 +37,33 @@ private val CORRECTION_BN = Regex("^(না না|না|নাহ|ভুল|�
 
 class ListenerService : Service() {
 
-    enum class State { OFF, STARTING, LISTENING, BUSY, PAUSED }
+    enum class State { OFF, STARTING, LISTENING, HEARING, BUSY, PAUSED }
 
     companion object {
         const val ACTION_START = "org.annay.topshe.START"
         const val ACTION_PAUSE = "org.annay.topshe.PAUSE"
         const val ACTION_KILL = "org.annay.topshe.KILL"
         const val ACTION_RELOAD = "org.annay.topshe.RELOAD"   // a new brain was installed
+        const val ACTION_TALK = "org.annay.topshe.TALK"       // 🎙 button: listen to me now, no wake word
         private const val CHANNEL = "topshe_listener"
         private const val NOTIF_ID = 7
 
         @Volatile var state = State.OFF
             private set
+        /** What just happened, for the screen ("Heard Topshe, but it didn't sound like you"). */
+        @Volatile var lastEvent = ""
+            private set
+        @Volatile var lastEventAt = 0L
+            private set
+        @Volatile private var talkNow = false
 
         fun send(ctx: Context, action: String) {
             val i = Intent(ctx, ListenerService::class.java).setAction(action)
-            if (action == ACTION_START && state == State.OFF) ctx.startForegroundService(i) else ctx.startService(i)
+            if ((action == ACTION_START || action == ACTION_TALK) && state == State.OFF)
+                ctx.startForegroundService(i) else ctx.startService(i)
         }
+
+        private fun event(text: String) { lastEvent = text; lastEventAt = System.currentTimeMillis() }
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -88,6 +98,7 @@ class ListenerService : Service() {
             ACTION_KILL -> kill()
             ACTION_PAUSE -> pause()
             ACTION_RELOAD -> reload()
+            ACTION_TALK -> { talkNow = true; startListening() }
             else -> startListening()
         }
         return START_NOT_STICKY   // never restarts on its own
@@ -106,10 +117,12 @@ class ListenerService : Service() {
             try {
                 val missing = Store.missing(this@ListenerService)
                 if (missing.isNotEmpty()) {
+                    event("Can't listen yet - missing: ${missing.joinToString()}")
                     ActivityLog.add(this@ListenerService, "Can't start. Missing: ${missing.joinToString()}")
                     kill(); return@launch
                 }
                 if (!Brain.load(this@ListenerService)) {
+                    event("The brain didn't load - open Settings and Sync")
                     ActivityLog.add(this@ListenerService, "Model failed to load")
                     kill(); return@launch
                 }
@@ -119,13 +132,18 @@ class ListenerService : Service() {
                 ActivityLog.add(this@ListenerService, "Listening (brain ${Brain.loadedName}, ${memory.facts().size} facts)")
                 // Get the brain's fixed instructions ready while you're not talking yet
                 scope.launch { runCatching { Brain.warmUp(memory.facts()) }; logSpeed() }
-                while (isActive && e.waitForWake { isActive }) {
-                    if (!handleWake(e)) { pauseFromInside(); break }
+                while (isActive) {
+                    val woke = e.waitForWake { isActive && !talkNow }
+                    val pushed = talkNow
+                    talkNow = false
+                    if (!woke && !pushed) break
+                    if (!handleWake(e, pushed)) { pauseFromInside(); break }
                     e.flush()
                     if (isActive) setState(State.LISTENING, "Listening for \"Topshe\"")
                 }
             } catch (t: Throwable) {
                 if (t !is kotlinx.coroutines.CancellationException) {
+                    event("Stopped because of an error: ${t.message}")
                     ActivityLog.add(this@ListenerService, "Error: ${t.message}")
                     kill()
                 }
@@ -136,21 +154,29 @@ class ListenerService : Service() {
     }
 
     /** Handles one "Topshe ..." request. Returns false if you asked it to stop. */
-    private suspend fun handleWake(e: Ear): Boolean {
+    private suspend fun handleWake(e: Ear, pushed: Boolean = false): Boolean {
         speaker.beep()
-        val u = e.capture()
-        val score = e.voiceScore(u.all)
-        if (score == null || score < prefs.voiceThreshold) {
-            // Not your voice (or too little voice): stay silent, like v1
-            ActivityLog.add(this, "Ignored a wake - voice score ${score?.let { "%.2f".format(it) } ?: "n/a"}")
-            return true
+        setState(State.HEARING, "Go ahead, I'm listening...")
+        event(if (pushed) "Listening - speak now" else "Heard \"Topshe\" - speak now")
+        val u = if (pushed) e.capture(waitMs = 6000) else e.capture()
+        if (pushed && u.speech.isEmpty()) { event("Didn't hear anything - tap 🎙 and speak"); return true }
+        if (!pushed) {                     // 🎙 tapped on your phone = it's you; a wake word must be your voice
+            val score = e.voiceScore(u.all)
+            if (score == null || score < prefs.voiceThreshold) {
+                event("Heard \"Topshe\", but it didn't sound like you (" +
+                    (score?.let { "%.2f".format(it) } ?: "too short") + "). Re-record your voice or lower the voice check in Settings.")
+                ActivityLog.add(this, "Ignored a wake - voice score ${score?.let { "%.2f".format(it) } ?: "n/a"}")
+                return true
+            }
         }
+        val score = 1f
         val h = e.hear(u.speech).withoutWakeWord()
         val dual = Brain.dualHearing
         val heard = h.forBrain(dual)                   // what the brain sees (and what it learns from)
         ActivityLog.add(this, "Heard (voice %.2f): \"%s\"".format(score, h.shown()))
-        if (if (dual) h.isBlank() else h.en.isBlank()) { speaker.say("Sorry, I didn't catch that."); return true }
+        if (if (dual) h.isBlank() else h.en.isBlank()) { event("Didn't catch the words"); speaker.say("Sorry, I didn't catch that."); return true }
         setState(State.BUSY, "Working: ${h.shown()}")
+        event("Heard: \"${h.shown()}\"")
         ChatLog.add(this, true, if (dual && h.bn.isNotBlank()) "${h.en}\n${h.bn}" else h.en, "voice")
 
         val asker = object : Actions.Asker {

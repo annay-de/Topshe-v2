@@ -13,7 +13,7 @@ class TopsheTile : TileService() {
     override fun onStartListening() {
         val tile = qsTile ?: return
         val s = ListenerService.state
-        tile.state = if (s == ListenerService.State.LISTENING || s == ListenerService.State.BUSY ||
+        tile.state = if (s == ListenerService.State.LISTENING || s == ListenerService.State.BUSY || s == ListenerService.State.HEARING ||
             s == ListenerService.State.STARTING) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         tile.label = "Topshe"
         if (Build.VERSION.SDK_INT >= 29) tile.subtitle = when (s) {

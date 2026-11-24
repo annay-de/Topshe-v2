@@ -32,8 +32,20 @@ class HomeScreen(private val act: Activity, private val k: Kit,
     private val chatList = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL; setPadding(0, k.dp(6), 0, k.dp(6)) }
     private val scroll = ScrollView(act).apply { isVerticalScrollBarEnabled = false; addView(chatList) }
     private val input = EditText(act)
-    private val pillDot = k.dot(Look.OFF)
-    private val pillText = k.text("Off", 13f, Look.TEXT, Look.semibold)
+    // Big listening status: a glowing dot + what it's doing + what just happened
+    private val orb = View(act).apply {
+        background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Look.OFF) }
+    }
+    private val statusTitle = k.text("Not listening", 16f, Look.TEXT, Look.semibold)
+    private val statusDetail = k.text("Tap to start", 12.5f, Look.MUTED)
+    private val pulse = android.animation.ObjectAnimator.ofFloat(orb, "alpha", 1f, 0.25f).apply {
+        repeatMode = android.animation.ValueAnimator.REVERSE
+        repeatCount = android.animation.ValueAnimator.INFINITE
+    }
+    private var shownState: ListenerService.State? = null
+    private val brainBanner = k.card(null)
+    private val brainBannerText = k.text("", 14f, Look.TEXT)
+    private lateinit var micButton: View
     private val banner = k.card(null)
     private val bannerText = k.text("", 14f, Look.TEXT)
     private val options = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
@@ -59,15 +71,28 @@ class HomeScreen(private val act: Activity, private val k: Kit,
         titles.addView(k.wordmark("TOPSHE").apply { textSize = 38f })
         titles.addView(k.text("Hey Annay", 15f, Look.MUTED, Look.semibold))
         head.addView(titles, LinearLayout.LayoutParams(0, -2, 1f))
-        val pill = LinearLayout(act).apply {
+        col.addView(head)
+
+        // Listening status (tap: on / off)
+        val status = LinearLayout(act).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            setPadding(k.dp(12), k.dp(8), k.dp(14), k.dp(8))
+            setPadding(k.dp(16), k.dp(12), k.dp(16), k.dp(12))
             background = k.rounded(0xD9141418.toInt(), 20, 1, Look.EDGE)
-            addView(pillDot); addView(pillText)
+            addView(orb, LinearLayout.LayoutParams(k.dp(18), k.dp(18)).apply { rightMargin = k.dp(14) })
+            val texts = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL; addView(statusTitle); addView(statusDetail) }
+            addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
             setOnClickListener { onToggle() }
         }
-        head.addView(pill)
-        col.addView(head)
+        col.addView(status, LinearLayout.LayoutParams(-1, -2).apply { topMargin = k.dp(12) })
+
+        // Still on the old, slow brain: offer the fast ones right now (any network)
+        brainBanner.addView(brainBannerText)
+        brainBanner.setOnClickListener {
+            DownloadWorker.brain(act, anyNetwork = true)
+            brainBannerText.text = "Downloading the fast brains... (progress in the notification)"
+        }
+        brainBanner.visibility = View.GONE
+        col.addView(brainBanner)
 
         // "Finish setup" banner (hidden once everything is ready)
         banner.addView(bannerText)
@@ -107,22 +132,55 @@ class HomeScreen(private val act: Activity, private val k: Kit,
             setOnEditorActionListener { _, id, _ -> if (id == EditorInfo.IME_ACTION_SEND) { send(text.toString()); true } else false }
         }
         row.addView(input, LinearLayout.LayoutParams(0, -2, 1f))
-        row.addView(k.round("🎙", false) { onToggle() })
+        micButton = k.round("🎙", false) { talkNow() }      // tap: speak now, no wake word needed
+        row.addView(micButton)
         row.addView(k.round("↑", true) { send(input.text.toString()) })
         col.addView(row)
         return col
     }
 
-    /** Listening pill + setup banner. */
-    fun refresh(missing: List<String>, s: ListenerService.State) {
-        val (color, label) = when {
-            missing.isNotEmpty() -> Look.OFF to "Setup"
-            s == ListenerService.State.OFF -> Look.OFF to "Off"
-            s == ListenerService.State.PAUSED -> Look.PAUSED to "Paused"
-            else -> Look.ON to "Listening"
+    /** 🎙: listen to one request right now (starts Topshe if it's off). */
+    private fun talkNow() {
+        if (Store.missing(act).isNotEmpty() ||
+            act.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            onToggle(); return                          // shows what's missing / asks for the mic
         }
-        (pillDot.background as GradientDrawable).setColor(color)
-        pillText.text = label
+        ListenerService.send(act, ListenerService.ACTION_TALK)
+        statusTitle.text = "Starting the mic..."
+    }
+
+    /** Listening status + setup banners (called every second). */
+    fun refresh(missing: List<String>, s: ListenerService.State) {
+        val (color, title, hint) = when {
+            missing.isNotEmpty() -> Triple(Look.OFF, "Not ready yet", "Finish setup in Settings")
+            s == ListenerService.State.OFF -> Triple(Look.OFF, "Not listening", "Tap here to start, or tap 🎙 to talk once")
+            s == ListenerService.State.STARTING -> Triple(Look.PAUSED, "Starting...", "Getting the mic and brain ready")
+            s == ListenerService.State.PAUSED -> Triple(Look.PAUSED, "Paused - mic is off", "Tap here to resume")
+            s == ListenerService.State.HEARING -> Triple(0xFF60A5FA.toInt(), "I'm listening - speak now", "Stop talking and I'll answer")
+            s == ListenerService.State.BUSY -> Triple(0xFFC084FC.toInt(), "Working on it...", "")
+            else -> Triple(Look.ON, "Listening for \"Topshe\"", "Say \"Topshe\", then your request. Or tap 🎙")
+        }
+        (orb.background as GradientDrawable).setColor(color)
+        statusTitle.text = title
+        val ev = ListenerService.lastEvent
+        val fresh = ev.isNotBlank() && System.currentTimeMillis() - ListenerService.lastEventAt < 60_000
+        statusDetail.text = if (fresh && s != ListenerService.State.HEARING) ev else hint
+        statusDetail.visibility = if (statusDetail.text.isBlank()) View.GONE else View.VISIBLE
+        if (s != shownState) {
+            shownState = s
+            pulse.cancel(); orb.alpha = 1f
+            if (s == ListenerService.State.LISTENING || s == ListenerService.State.HEARING || s == ListenerService.State.BUSY) {
+                pulse.duration = if (s == ListenerService.State.LISTENING) 1100 else 380
+                pulse.start()
+            }
+            micButton.alpha = if (s == ListenerService.State.HEARING) 0.5f else 1f
+        }
+        // Old 4B brain (too slow on this phone) still installed?
+        val p = prefs
+        val old = p.brainVersion in 1..2 && Store.brain(act).exists()
+        brainBanner.visibility = if (old) View.VISIBLE else View.GONE
+        if (old) brainBannerText.text = p.brainDl.takeIf { it.contains("MB") || it.contains("queued") }
+            ?: "You're still on the old, slow brain. Tap to download the fast ones now (about 1.8 GB)."
         banner.visibility = if (missing.isEmpty()) View.GONE else View.VISIBLE
         bannerText.text = "Finish setup: ${missing.joinToString()}. Tap to open Settings."
         if (missing.isEmpty() && ChatLog.stamp(act) == 0L && chatList.childCount == 0)
@@ -185,7 +243,11 @@ class HomeScreen(private val act: Activity, private val k: Kit,
                 runCatching { eng.handle(t, asker) }.getOrElse { e -> speaker?.say("Something went wrong: ${e.message}"); true }
             }
             busy = false
-            thinking.visibility = View.GONE
+            // How long it took, and which brain (so slow answers are easy to spot)
+            val secs = (System.currentTimeMillis() - busySince) / 1000.0
+            thinking.text = "Took %.1fs · brain %s".format(secs, Brain.loadedName.ifBlank { "-" })
+            thinking.visibility = View.VISIBLE
+            thinking.postDelayed({ if (!busy) thinking.visibility = View.GONE }, 15_000)
             if (!keep && ListenerService.state != ListenerService.State.OFF) ListenerService.send(act, ListenerService.ACTION_PAUSE)
             tick()
         }
