@@ -67,7 +67,7 @@ object QuickRules {
         // A plain question goes straight to the chat brain (skips the command brain: answers start sooner)
         if (t.matches(Regex("^(what|what's|whats|who|who's|why|how|when|where|which|explain|define|tell me about|tell me a|is|are|does|do|should|could|can you explain)\\b.*")) &&
             !Regex("\\b(remind|reminder|alarm|timer|call|message|text|whatsapp|play|playing|song|music|open|volume|set|wake)\\b").containsMatchIn(t))
-            return JSONObject().put("action", "chat").put("query", raw.trim())
+            return JSONObject().put("action", "chat").put("query", t)
         alarm(t)?.let { return it }
         // open / launch X (a short app name)
         Regex("^(open|launch|start) (the )?([a-z0-9 .+&'-]{2,30}?)( app)?( please)?$").find(t)?.let { m ->
